@@ -314,59 +314,142 @@ def plot_hand_analysis(db_path: str = "poker.db", save_path: Optional[str] = Non
         plt.show()
 
 
-def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = None):
-    """Create session trend visualizations."""
-    session_data = get_session_data(db_path)
-    pot_data = get_pot_sizes(db_path)
+def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = None,
+                        min_games: int = 0):
+    """Create session trend visualizations with global hand indexing across sessions."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
 
-    if not session_data:
+    # Get all hands ordered by timestamp, assign a global sequential index
+    cursor.execute("""
+        SELECT h.id as hand_id, h.game_id, h.hand_number, h.started_at
+        FROM hands h
+        ORDER BY h.started_at, h.hand_number
+    """)
+    all_hands = cursor.fetchall()
+
+    if not all_hands:
         print("No session data available")
+        conn.close()
         return
 
-    fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+    # Build global index and detect session boundaries
+    hand_id_to_global = {}
+    session_boundaries = []
+    prev_game_id = None
+    for i, hand in enumerate(all_hands):
+        hand_id_to_global[hand['hand_id']] = i + 1
+        if hand['game_id'] != prev_game_id:
+            if prev_game_id is not None:
+                session_boundaries.append(i + 1)
+            prev_game_id = hand['game_id']
+
+    total_hands = len(all_hands)
+
+    # Get player net gains per hand, with canonical names
+    cursor.execute("""
+        SELECT
+            hp.hand_id,
+            h.game_id,
+            COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) as player_id,
+            COALESCE(cp.name, p.name) as name,
+            hp.net_gain
+        FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id
+        JOIN players p ON hp.player_id = p.id
+        LEFT JOIN player_mappings pm ON p.id = pm.raw_player_id AND p.name = pm.nickname
+        LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
+        ORDER BY h.started_at, h.hand_number
+    """)
+    player_data = cursor.fetchall()
+
+    # Count games per player for filtering
+    cursor.execute("""
+        SELECT
+            COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) as player_id,
+            COUNT(DISTINCT h.game_id) as games_played
+        FROM players p
+        JOIN hand_players hp ON p.id = hp.player_id
+        JOIN hands h ON hp.hand_id = h.id
+        LEFT JOIN player_mappings pm ON p.id = pm.raw_player_id AND p.name = pm.nickname
+        LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
+        GROUP BY player_id
+    """)
+    player_games = {row['player_id']: row['games_played'] for row in cursor.fetchall()}
+
+    # Get pot sizes with global index
+    cursor.execute("""
+        SELECT h.id as hand_id, MAX(hr.pot) as pot_size
+        FROM hands h
+        JOIN hand_results hr ON h.id = hr.hand_id
+        GROUP BY h.id
+    """)
+    pot_by_hand = {row['hand_id']: row['pot_size'] or 0 for row in cursor.fetchall()}
+
+    conn.close()
+
+    # Build cumulative profit per player (filtered by min_games)
+    player_cumulative = defaultdict(lambda: {"indices": [], "cumulative": [], "name": ""})
+
+    for row in player_data:
+        pid = row['player_id']
+        if min_games > 0 and player_games.get(pid, 0) < min_games:
+            continue
+
+        global_idx = hand_id_to_global.get(row['hand_id'])
+        if global_idx is None:
+            continue
+
+        net_gain = row['net_gain'] or 0
+        player_cumulative[pid]["name"] = row['name']
+
+        prev = player_cumulative[pid]["cumulative"][-1] if player_cumulative[pid]["cumulative"] else 0
+        player_cumulative[pid]["indices"].append(global_idx)
+        player_cumulative[pid]["cumulative"].append(prev + net_gain)
+
+    # Sort players by final profit for consistent legend ordering
+    sorted_players = sorted(player_cumulative.items(),
+                            key=lambda x: x[1]["cumulative"][-1] if x[1]["cumulative"] else 0,
+                            reverse=True)
+
+    fig, axes = plt.subplots(2, 1, figsize=(16, 10))
     fig.suptitle('Session Trends', fontsize=16, fontweight='bold')
 
-    # Calculate cumulative profit per player
-    player_cumulative = defaultdict(lambda: {"hands": [], "cumulative": [], "name": ""})
-
-    for row in session_data:
-        player_id = row['player_id']
-        hand_num = row['hand_number']
-        net_gain = row['net_gain'] or 0
-        name = row['name']
-
-        player_cumulative[player_id]["name"] = name
-
-        if player_cumulative[player_id]["cumulative"]:
-            prev = player_cumulative[player_id]["cumulative"][-1]
-        else:
-            prev = 0
-
-        player_cumulative[player_id]["hands"].append(hand_num)
-        player_cumulative[player_id]["cumulative"].append(prev + net_gain)
-
-    # Stack progression over time
+    # Top: Cumulative profit across all sessions
     ax1 = axes[0]
-    for player_id, data in player_cumulative.items():
-        ax1.plot(data["hands"], data["cumulative"], label=data["name"], marker='o', markersize=3)
+    for pid, data in sorted_players:
+        ax1.plot(data["indices"], data["cumulative"], label=data["name"], linewidth=1.5, alpha=0.85)
 
-    ax1.set_xlabel('Hand Number')
+    # Draw session boundary lines
+    for boundary in session_boundaries:
+        ax1.axvline(x=boundary, color='gray', linestyle=':', linewidth=0.5, alpha=0.5)
+
+    ax1.set_xlabel(f'Hand (sequential across {len(session_boundaries) + 1} sessions)')
     ax1.set_ylabel('Cumulative Profit/Loss')
-    ax1.set_title('Stack Progression Over Session')
-    ax1.legend(loc='best')
+    ax1.set_title('All-Time Cumulative Profit/Loss')
+    ax1.legend(loc='upper left', fontsize=8, ncol=2, framealpha=0.9)
     ax1.axhline(y=0, color='black', linestyle='--', linewidth=0.5)
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(True, alpha=0.2)
 
-    # Pot size over time
+    # Bottom: Pot size across all sessions
     ax2 = axes[1]
-    if pot_data:
-        hand_nums = [row['hand_number'] for row in pot_data]
-        pot_sizes = [row['pot_size'] or 0 for row in pot_data]
-        ax2.bar(hand_nums, pot_sizes, color='gold', alpha=0.7)
-        ax2.set_xlabel('Hand Number')
+    global_pot_indices = []
+    global_pot_sizes = []
+    for hand in all_hands:
+        gidx = hand_id_to_global[hand['hand_id']]
+        pot = pot_by_hand.get(hand['hand_id'], 0)
+        if pot > 0:
+            global_pot_indices.append(gidx)
+            global_pot_sizes.append(pot)
+
+    if global_pot_sizes:
+        ax2.bar(global_pot_indices, global_pot_sizes, color='gold', alpha=0.7, width=1.0)
+        for boundary in session_boundaries:
+            ax2.axvline(x=boundary, color='gray', linestyle=':', linewidth=0.5, alpha=0.5)
+        ax2.set_xlabel(f'Hand (sequential across {len(session_boundaries) + 1} sessions)')
         ax2.set_ylabel('Pot Size')
         ax2.set_title('Pot Size by Hand')
-        ax2.grid(True, alpha=0.3, axis='y')
+        ax2.grid(True, alpha=0.2, axis='y')
     else:
         ax2.text(0.5, 0.5, 'No pot data available', ha='center', va='center')
 
@@ -486,7 +569,7 @@ def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = "."
 
     plot_player_statistics(db_path, str(output / "player_statistics.png"), min_games=min_games)
     plot_hand_analysis(db_path, str(output / "hand_analysis.png"))
-    plot_session_trends(db_path, str(output / "session_trends.png"))
+    plot_session_trends(db_path, str(output / "session_trends.png"), min_games=min_games)
     plot_pipeline_diagram(str(output / "pipeline_diagram.png"))
 
     print("\nAll visualizations generated!")
