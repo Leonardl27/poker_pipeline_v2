@@ -224,6 +224,17 @@ def plot_player_statistics(db_path: str = "poker.db", save_path: Optional[str] =
         plt.show()
 
 
+def _categorize_hand(description: str) -> str:
+    """Extract the hand category from a hand description like 'Pair, A's' -> 'Pair'."""
+    for category in [
+        "Four of a Kind", "Full House", "Flush", "Straight",
+        "Three of a Kind", "Two Pair", "Pair"
+    ]:
+        if description.startswith(category):
+            return category
+    return "High Card"
+
+
 def plot_hand_analysis(db_path: str = "poker.db", save_path: Optional[str] = None):
     """Create hand analysis visualizations."""
     data = get_hand_distributions(db_path)
@@ -231,26 +242,55 @@ def plot_hand_analysis(db_path: str = "poker.db", save_path: Optional[str] = Non
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     fig.suptitle('Hand Analysis', fontsize=16, fontweight='bold')
 
-    # Winning hand distribution
+    # Winning hand distribution — grouped by category
     ax1 = axes[0]
     if data["hands"]:
-        hand_names = [row['hand_description'] for row in data["hands"]]
-        hand_counts = [row['count'] for row in data["hands"]]
-        ax1.barh(hand_names, hand_counts, color='purple')
+        # Aggregate counts by hand category
+        category_counts = defaultdict(int)
+        for row in data["hands"]:
+            category = _categorize_hand(row['hand_description'])
+            category_counts[category] += row['count']
+
+        # Sort by poker hand ranking (weakest to strongest for bottom-to-top display)
+        hand_ranking = [
+            "High Card", "Pair", "Two Pair", "Three of a Kind",
+            "Straight", "Flush", "Full House", "Four of a Kind"
+        ]
+        sorted_categories = [h for h in hand_ranking if h in category_counts]
+        sorted_counts = [category_counts[h] for h in sorted_categories]
+
+        colors = plt.cm.RdYlGn([i / (len(sorted_categories) - 1) for i in range(len(sorted_categories))])
+        ax1.barh(sorted_categories, sorted_counts, color=colors)
         ax1.set_xlabel('Count')
         ax1.set_title('Winning Hand Distribution')
+
+        # Add count labels on bars
+        for i, (count, name) in enumerate(zip(sorted_counts, sorted_categories)):
+            ax1.text(count + max(sorted_counts) * 0.01, i, str(count),
+                     va='center', fontsize=9, fontweight='bold')
     else:
         ax1.text(0.5, 0.5, 'No hand data available', ha='center', va='center')
 
-    # Action distribution
+    # Action distribution — filter out unknown types
     ax2 = axes[1]
     if data["actions"]:
-        action_names = [EVENT_TYPES.get(row['event_type'], f"Type {row['event_type']}")
-                        for row in data["actions"]]
-        action_counts = [row['count'] for row in data["actions"]]
+        action_names = []
+        action_counts = []
+        for row in data["actions"]:
+            name = EVENT_TYPES.get(row['event_type'])
+            if name is None:
+                continue
+            action_names.append(name)
+            action_counts.append(row['count'])
+
         ax2.barh(action_names, action_counts, color='teal')
         ax2.set_xlabel('Count')
         ax2.set_title('Action Distribution')
+
+        # Add count labels on bars
+        for i, count in enumerate(action_counts):
+            ax2.text(count + max(action_counts) * 0.01, i, f'{count:,}',
+                     va='center', fontsize=9)
     else:
         ax2.text(0.5, 0.5, 'No action data available', ha='center', va='center')
 
@@ -328,6 +368,101 @@ def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = No
         plt.show()
 
 
+def plot_pipeline_diagram(save_path: Optional[str] = None):
+    """Create a visual diagram of the data pipeline architecture."""
+    fig, ax = plt.subplots(figsize=(14, 7))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 7)
+    ax.axis('off')
+    fig.patch.set_facecolor('#1a1a2e')
+
+    # Colors
+    bg = '#16213e'
+    border = '#0f3460'
+    accent = '#e94560'
+    teal = '#2a9d8f'
+    gold = '#e9c46a'
+    text_color = '#eee'
+    arrow_color = '#aaa'
+
+    def draw_box(x, y, w, h, label, sublabel=None, color=border, fc=bg):
+        rect = plt.Rectangle((x, y), w, h, linewidth=2, edgecolor=color,
+                              facecolor=fc, zorder=2, clip_on=False)
+        ax.add_patch(rect)
+        if sublabel:
+            ax.text(x + w/2, y + h/2 + 0.15, label, ha='center', va='center',
+                    fontsize=11, fontweight='bold', color=text_color, zorder=3)
+            ax.text(x + w/2, y + h/2 - 0.2, sublabel, ha='center', va='center',
+                    fontsize=8, color='#aaa', zorder=3, style='italic')
+        else:
+            ax.text(x + w/2, y + h/2, label, ha='center', va='center',
+                    fontsize=11, fontweight='bold', color=text_color, zorder=3)
+
+    def draw_arrow(x1, y1, x2, y2):
+        ax.annotate('', xy=(x2, y2), xytext=(x1, y1),
+                    arrowprops=dict(arrowstyle='->', color=arrow_color,
+                                    lw=2, connectionstyle='arc3,rad=0'),
+                    zorder=1)
+
+    # Title
+    ax.text(7, 6.5, 'Poker Pipeline Architecture', ha='center', va='center',
+            fontsize=18, fontweight='bold', color=accent)
+
+    # Row 1: Data Sources
+    ax.text(2.5, 5.7, 'DATA SOURCES', ha='center', fontsize=9, color=gold,
+            fontweight='bold')
+    draw_box(0.5, 4.8, 4, 0.8, 'JSON Replay Files', 'raw/*.json', color=teal)
+
+    ax.text(9, 5.7, 'CONFIGURATION', ha='center', fontsize=9, color=gold,
+            fontweight='bold')
+    draw_box(7, 4.8, 4, 0.8, 'Player Mappings', 'player_map.yaml', color=teal)
+
+    # Row 2: Processing
+    ax.text(5.5, 4.1, 'PROCESSING PIPELINE', ha='center', fontsize=9, color=gold,
+            fontweight='bold')
+    draw_box(0.5, 3.0, 2.8, 0.8, 'Ingest', 'ingest.py', color=accent)
+    draw_box(4.1, 3.0, 2.8, 0.8, 'Map Players', 'mappings.py', color=accent)
+    draw_box(7.7, 3.0, 2.8, 0.8, 'Visualize', 'visualize.py', color=accent)
+
+    # Arrows: sources -> processing
+    draw_arrow(2.5, 4.8, 1.9, 3.8)
+    draw_arrow(9, 4.8, 5.5, 3.8)
+
+    # Arrows between processing steps
+    draw_arrow(3.3, 3.4, 4.1, 3.4)
+    draw_arrow(6.9, 3.4, 7.7, 3.4)
+
+    # Row 3: Storage
+    draw_box(3.5, 1.5, 3.5, 0.8, 'SQLite Database', 'poker.db', color=gold, fc='#1e2a3e')
+    draw_arrow(1.9, 3.0, 5.25, 2.3)
+    draw_arrow(5.5, 3.0, 5.25, 2.3)
+    draw_arrow(5.25, 2.3, 9.1, 3.0)
+
+    # Row 3: Output
+    ax.text(11.8, 4.1, 'OUTPUT', ha='center', fontsize=9, color=gold,
+            fontweight='bold')
+    draw_box(10.8, 3.0, 2.5, 0.8, 'Dashboard', 'index.html', color='#4caf50')
+
+    # Arrow: visualize -> dashboard
+    draw_arrow(10.5, 3.4, 10.8, 3.4)
+
+    # Row 4: Deployment
+    draw_box(10.8, 1.5, 2.5, 0.8, 'GitHub Pages', 'Auto-deploy', color='#4caf50')
+    draw_arrow(12.05, 3.0, 12.05, 2.3)
+
+    # CI/CD label
+    ax.text(7, 0.6, 'Triggered by: git push to raw/ or player_map.yaml', ha='center',
+            fontsize=9, color='#666', style='italic')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='#1a1a2e')
+        print(f"Saved: {save_path}")
+    else:
+        plt.show()
+
+
 def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = "."):
     """Generate all visualizations and save to files."""
     from pathlib import Path
@@ -340,6 +475,7 @@ def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = "."
     plot_player_statistics(db_path, str(output / "player_statistics.png"))
     plot_hand_analysis(db_path, str(output / "hand_analysis.png"))
     plot_session_trends(db_path, str(output / "session_trends.png"))
+    plot_pipeline_diagram(str(output / "pipeline_diagram.png"))
 
     print("\nAll visualizations generated!")
 

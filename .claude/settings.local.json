@@ -11,7 +11,13 @@
       "Bash(git init:*)",
       "Bash(git branch:*)",
       "Bash(gh repo view:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd GitHub Actions pipeline to deploy poker analytics dashboard to GitHub Pages\n\nAdds a CI/CD workflow that automatically rebuilds and deploys a static HTML\ndashboard whenever new JSON replay files are pushed to raw/. The dashboard\nincludes a sortable player leaderboard, summary cards, and embedded Matplotlib\ncharts for player statistics, hand analysis, and session trends.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run watch:*)",
+      "Bash(gh api:*)"
     ]
   }
 }
