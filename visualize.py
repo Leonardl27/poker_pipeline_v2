@@ -14,20 +14,24 @@ from datetime import datetime
 from database import get_connection, EVENT_TYPES
 
 
-def get_player_statistics(db_path: str = "poker.db", use_enriched: bool = True) -> list:
+def get_player_statistics(db_path: str = "poker.db", use_enriched: bool = True,
+                          min_games: int = 0) -> list:
     """
     Get comprehensive player statistics.
 
     Args:
         db_path: Path to database
         use_enriched: If True, aggregate by canonical player names when mapped
+        min_games: Minimum number of game sessions a player must have participated in
     """
     conn = get_connection(db_path)
     cursor = conn.cursor()
 
+    having_clause = f"HAVING COUNT(DISTINCT h.game_id) >= {min_games}" if min_games > 0 else ""
+
     if use_enriched:
         # Enriched query: use canonical names where available, aggregate by canonical identity
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 COALESCE(cp.name, p.name) as name,
                 COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) as id,
@@ -35,17 +39,20 @@ def get_player_statistics(db_path: str = "poker.db", use_enriched: bool = True) 
                 SUM(hp.net_gain) as total_profit,
                 AVG(hp.net_gain) as avg_profit_per_hand,
                 SUM(CASE WHEN hp.net_gain > 0 THEN 1 ELSE 0 END) as hands_won,
-                SUM(CASE WHEN hp.showed_cards = 1 THEN 1 ELSE 0 END) as showdowns
+                SUM(CASE WHEN hp.showed_cards = 1 THEN 1 ELSE 0 END) as showdowns,
+                COUNT(DISTINCT h.game_id) as games_played
             FROM players p
             JOIN hand_players hp ON p.id = hp.player_id
+            JOIN hands h ON hp.hand_id = h.id
             LEFT JOIN player_mappings pm ON p.id = pm.raw_player_id AND p.name = pm.nickname
             LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
             GROUP BY COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id)
+            {having_clause}
             ORDER BY total_profit DESC
         """)
     else:
         # Raw query: use original player identities
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 p.id,
                 p.name,
@@ -53,10 +60,13 @@ def get_player_statistics(db_path: str = "poker.db", use_enriched: bool = True) 
                 SUM(hp.net_gain) as total_profit,
                 AVG(hp.net_gain) as avg_profit_per_hand,
                 SUM(CASE WHEN hp.net_gain > 0 THEN 1 ELSE 0 END) as hands_won,
-                SUM(CASE WHEN hp.showed_cards = 1 THEN 1 ELSE 0 END) as showdowns
+                SUM(CASE WHEN hp.showed_cards = 1 THEN 1 ELSE 0 END) as showdowns,
+                COUNT(DISTINCT h.game_id) as games_played
             FROM players p
             JOIN hand_players hp ON p.id = hp.player_id
+            JOIN hands h ON hp.hand_id = h.id
             GROUP BY p.id
+            {having_clause}
             ORDER BY total_profit DESC
         """)
 
@@ -167,9 +177,10 @@ def get_pot_sizes(db_path: str = "poker.db") -> list:
     return results
 
 
-def plot_player_statistics(db_path: str = "poker.db", save_path: Optional[str] = None):
+def plot_player_statistics(db_path: str = "poker.db", save_path: Optional[str] = None,
+                           min_games: int = 0):
     """Create player statistics visualizations."""
-    stats = get_player_statistics(db_path)
+    stats = get_player_statistics(db_path, min_games=min_games)
 
     if not stats:
         print("No data available for player statistics")
@@ -463,7 +474,8 @@ def plot_pipeline_diagram(save_path: Optional[str] = None):
         plt.show()
 
 
-def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = "."):
+def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = ".",
+                                min_games: int = 0):
     """Generate all visualizations and save to files."""
     from pathlib import Path
 
@@ -472,7 +484,7 @@ def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = "."
 
     print("Generating visualizations...")
 
-    plot_player_statistics(db_path, str(output / "player_statistics.png"))
+    plot_player_statistics(db_path, str(output / "player_statistics.png"), min_games=min_games)
     plot_hand_analysis(db_path, str(output / "hand_analysis.png"))
     plot_session_trends(db_path, str(output / "session_trends.png"))
     plot_pipeline_diagram(str(output / "pipeline_diagram.png"))

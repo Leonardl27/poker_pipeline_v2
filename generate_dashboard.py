@@ -23,6 +23,7 @@ DB_PATH = "poker.db"
 RAW_DIR = "raw"
 MAPPING_FILE = "player_map.yaml"
 OUTPUT_DIR = "_site"
+MIN_GAMES = 3  # Only show players who have played in at least this many sessions
 
 
 def run_pipeline(db_path: str = DB_PATH) -> dict:
@@ -67,7 +68,7 @@ def run_pipeline(db_path: str = DB_PATH) -> dict:
 
 def generate_chart_base64(db_path: str, output_dir: str) -> dict:
     """Generate all charts and return them as base64-encoded strings."""
-    generate_all_visualizations(db_path, output_dir)
+    generate_all_visualizations(db_path, output_dir, min_games=MIN_GAMES)
 
     charts = {}
     for chart_name in ["player_statistics.png", "hand_analysis.png", "session_trends.png", "pipeline_diagram.png"]:
@@ -81,7 +82,7 @@ def generate_chart_base64(db_path: str, output_dir: str) -> dict:
 
 def get_table_data(db_path: str) -> list:
     """Get player statistics formatted for the HTML leaderboard table."""
-    stats = get_player_statistics(db_path, use_enriched=True)
+    stats = get_player_statistics(db_path, use_enriched=True, min_games=MIN_GAMES)
     rows = []
     for row in stats:
         hands_played = row["hands_played"]
@@ -92,6 +93,7 @@ def get_table_data(db_path: str) -> list:
 
         rows.append({
             "name": row["name"],
+            "games_played": row["games_played"],
             "hands_played": hands_played,
             "hands_won": hands_won,
             "win_rate": round(win_rate, 1),
@@ -117,6 +119,7 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         table_rows += f"""
                 <tr>
                     <td>{row['name']}</td>
+                    <td>{row['games_played']}</td>
                     <td>{row['hands_played']}</td>
                     <td>{row['hands_won']}</td>
                     <td>{row['win_rate']:.1f}%</td>
@@ -316,7 +319,7 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
     <div class="container">
         <header>
             <h1>&#9824; Poker Analytics Dashboard</h1>
-            <p class="subtitle">Auto-generated from {summary['files_ingested']} session files</p>
+            <p class="subtitle">Auto-generated from {summary['files_ingested']} session files &middot; Players with {MIN_GAMES}+ games</p>
         </header>
 
         <section class="summary-cards">
@@ -344,12 +347,13 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
                 <thead>
                     <tr>
                         <th onclick="sortTable(0, 'string')">Player &#8597;</th>
-                        <th onclick="sortTable(1, 'number')">Hands &#8597;</th>
-                        <th onclick="sortTable(2, 'number')">Wins &#8597;</th>
-                        <th onclick="sortTable(3, 'number')">Win Rate &#8597;</th>
-                        <th onclick="sortTable(4, 'number')">Profit/Loss &#8597;</th>
-                        <th onclick="sortTable(5, 'number')">Avg/Hand &#8597;</th>
-                        <th onclick="sortTable(6, 'number')">Showdowns &#8597;</th>
+                        <th onclick="sortTable(1, 'number')">Games &#8597;</th>
+                        <th onclick="sortTable(2, 'number')">Hands &#8597;</th>
+                        <th onclick="sortTable(3, 'number')">Wins &#8597;</th>
+                        <th onclick="sortTable(4, 'number')">Win Rate &#8597;</th>
+                        <th onclick="sortTable(5, 'number')">Profit/Loss &#8597;</th>
+                        <th onclick="sortTable(6, 'number')">Avg/Hand &#8597;</th>
+                        <th onclick="sortTable(7, 'number')">Showdowns &#8597;</th>
                     </tr>
                 </thead>
                 <tbody>{table_rows}
