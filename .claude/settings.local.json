@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python main.py:*)",
+      "Bash(dir \"C:\\\\Users\\\\leona\\\\appdev\\\\poker_pipeline_v2\\\\raw\" /b)",
+      "Bash(echo:*)",
+      "Bash(dir:*)",
+      "Bash(python:*)",
+      "Bash(wc:*)",
+      "Bash(start \"\" \"C:\\\\Users\\\\leona\\\\appdev\\\\poker_pipeline_v2\\\\_site\\\\index.html\")",
+      "Bash(git init:*)",
+      "Bash(git branch:*)",
+      "Bash(gh repo view:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

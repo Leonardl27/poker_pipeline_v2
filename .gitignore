@@ -1,0 +1,16 @@
+# Database (rebuilt from raw JSON on every CI run)
+poker.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated build artifacts
+_site/
+*.png
+
+# OS
+.DS_Store
+Thumbs.db
+nul

@@ -1,0 +1,219 @@
+# Player Identity Mapping Configuration
+#
+# Workflow:
+#   1. Run `python main.py unmapped` to see all (id, nickname) pairs needing mapping
+#   2. Add those pairs to the appropriate player's aliases list below
+#   3. Run `python main.py load-mappings` to apply changes
+#   4. Run `python main.py visualize` to see aggregated stats by real name
+#
+
+canonical_players:
+  - id: 1
+    name: "Leonard Lange"
+    aliases:
+      - id: "mrmMdPuwc-"
+        nickname: "Lenny"
+      - id: "RXHdCYkC_S"
+        nickname: "El Presidente"
+
+  - id: 2
+    name: "Marshall Lange"
+    aliases:
+      - id: "kOZ_JaFqjv"
+        nickname: "Marsh"
+
+  - id: 3
+    name: "Jake Joraanstad"
+    aliases:
+      - id: "XddyijEojw"
+        nickname: "MastaChieftain"
+      - id: "cbH8-Ek8pQ"
+        nickname: "MastaChief"
+      - id: "GvzLtQFkZ8"
+        nickname: "MasterChief"
+      - id: "W0Z_rQLoXa"
+        nickname: "MastaChief"
+      - id: "gfzZBV6nbH"
+        nickname: "MastaChief"
+
+  - id: 4
+    name: "Levi Joraanstad"
+    aliases:
+      - id: "vMKUQE5PTE"
+        nickname: "SgtJorny"
+      - id: "kdMMgVlEUK"
+        nickname: "SgtJorny"
+      - id: "LqSuPQ_q1V"
+        nickname: "Hugh Mungus"
+      - id: "ZhQyS5dI9o"
+        nickname: "Hugh Mungo"
+      - id: "0VxjlIi2tI"
+        nickname: "HughMungus"
+      - id: "2Isc6unqDB"
+        nickname: "Big Chungus"
+
+  - id: 5
+    name: "Carl Nelson"
+    aliases:
+      - id: "K_89Eqsb_u"
+        nickname: "Daddy"
+      - id: "0-j4VAoA4t"
+        nickname: "Daddy"
+      - id: "ce88TBogl2"
+        nickname: "Big Daddy"
+
+  - id: 6
+    name: "Eric Gault"
+    aliases:
+      - id: "t8gxeLW_JB"
+        nickname: "enrique"
+      - id: "sszgvSxfi5"
+        nickname: "eric"
+      - id: "KsECv73vsi"
+        nickname: "eric"
+      - id: "r1z2cXDQjw"
+        nickname: "eric"
+      - id: "iAQb4dbG-9"
+        nickname: "edawg"
+      - id: "i7t-jGi1k1"
+        nickname: "eric"
+      - id: "q3sY-sdspc"
+        nickname: "Eric"
+
+  - id: 7
+    name: "Joe Laverdure"
+    aliases:
+      - id: "795wxAk1yL"
+        nickname: "injun"
+      - id: "BThjG8wm-H"
+        nickname: "injun joe"
+
+  - id: 8
+    name: "Christian Klonowski"
+    aliases:
+      - id: "I7J1J9dC3q"
+        nickname: "Tex"
+      - id: "pICMMRSOxM"
+        nickname: "Chris"
+
+  - id: 9
+    name: "Kody Holen"
+    aliases:
+      - id: "ctxg9uHKIE"
+        nickname: "Kody Jo"
+
+  - id: 10
+    name: "Matt Lee"
+    aliases:
+      - id: "zWVftch7ar"
+        nickname: "Matt"
+      - id: "cKbjU78apg"
+        nickname: "Matt"
+      - id: "8d1z1lxDC-"
+        nickname: "matt"
+      - id: "mhMa3hL_oT"
+        nickname: "Matt"
+      - id: "ApQgeN8Cj-"
+        nickname: "Matt"
+
+  - id: 11
+    name: "Kevin Coffman"
+    aliases:
+      - id: "-YT-TMUwLK"
+        nickname: "kevbot"
+      - id: "4HiZJGv1Zm"
+        nickname: "kevdog"
+      - id: "X0oOirQ0_D"
+        nickname: "Kevin"
+
+  - id: 12
+    name: "Jake Larson"
+    aliases:
+      - id: "KJyhUSVjwc"
+        nickname: "Jake/MNHoss"
+      - id: "96W5E5agD8"
+        nickname: "Jake"
+
+  - id: 13
+    name: "Alex Wohl"
+    aliases:
+      - id: "PGkL_7GhI4"
+        nickname: "Steelwool-Alex"
+      - id: "a84xgZZ7Yr"
+        nickname: "SteelWoolHurts"
+      - id: "72QaAdnCup"
+        nickname: "Steel"
+
+  - id: 14
+    name: "Dennis Norwood"
+    aliases:
+      - id: "OKHCLhDUwF"
+        nickname: "candynuts"
+      - id: "5vlGwtQ0IA"
+        nickname: "candynuts"
+      - id: "clPhTQ_ME8"
+        nickname: "candynuts"
+
+  - id: 15
+    name: "Ben Pressley"
+    aliases:
+      - id: "wLhk7ch114"
+        nickname: "Ben"
+
+  - id: 16
+    name: "Dan Johnson"
+    aliases:
+      - id: "7cDe6-4038"
+        nickname: "Dan"
+      - id: "yPI1AsJhGX"
+        nickname: "BLIND LEADETH"
+
+  - id: 17
+    name: "Trek Wilhelmi"
+    aliases:
+      - id: "aH6tDuQV3H"
+        nickname: "Trek"
+
+  - id: 18
+    name: "Cole Haberstroh"
+    aliases:
+      - id: "kCN4aiQANE"
+        nickname: "The Skydancer"
+      - id: "g3uNIsYHxG"
+        nickname: "The Rizzler"
+
+  - id: 19
+    name: "Kyle Kakela"
+    aliases:
+      - id: "muk5A4aTz7"
+        nickname: "Kakela"
+      - id: "XFCKboeYw-"
+        nickname: "Kakela"
+
+  - id: 20
+    name: "Trent McCloud"
+    aliases:
+      - id: "bxh2lYWVjC"
+        nickname: "Tmac"
+
+  - id: 21
+    name: "Jared Vandal"
+    aliases: []
+
+  - id: 22
+    name: "Ryan Bauer"
+    aliases:
+      - id: "fhqpX7EysR"
+        nickname: "BlitzRyan"
+
+  - id: 23
+    name: "Justin Coffman"
+    aliases:
+      - id: "KzbXCXdTU7"
+        nickname: "SMOKEY"
+
+  - id: 24
+    name: "Ross Sigler"
+    aliases:
+      - id: "I55bsHWYKm"
+        nickname: "Roscoe"
