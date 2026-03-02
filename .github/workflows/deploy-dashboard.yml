@@ -2,9 +2,6 @@ name: Deploy Poker Dashboard
 
 on:
   push:
-    paths:
-      - 'raw/**'
-      - 'player_map.yaml'
     branches:
       - main
   workflow_dispatch:
