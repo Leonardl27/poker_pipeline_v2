@@ -71,7 +71,8 @@ def generate_chart_base64(db_path: str, output_dir: str) -> dict:
     generate_all_visualizations(db_path, output_dir, min_games=MIN_GAMES)
 
     charts = {}
-    for chart_name in ["player_statistics.png", "hand_analysis.png", "session_trends.png", "pipeline_diagram.png"]:
+    for chart_name in ["player_statistics.png", "hand_analysis.png", "session_trends.png",
+                       "momentum.png", "pipeline_diagram.png"]:
         chart_path = Path(output_dir) / chart_name
         if chart_path.exists():
             with open(chart_path, "rb") as f:
@@ -137,6 +138,9 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
          "Distribution of winning hand types and action frequency across all sessions."),
         ("session_trends.png", "Session Trends",
          "Cumulative profit/loss progression and pot sizes across all hands."),
+        ("momentum.png", "Player Momentum",
+         "Per-session profit/loss for each player. \u2191/\u2193 arrows show whether a player\u2019s "
+         "recent form (last 3 sessions) is up or down vs the 3 sessions before that."),
         ("pipeline_diagram.png", "Pipeline Architecture",
          "How data flows from raw JSON replay files through the processing pipeline to this dashboard."),
     ]

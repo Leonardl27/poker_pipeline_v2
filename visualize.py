@@ -5,6 +5,7 @@ Uses Matplotlib for static charts.
 By default, uses enriched data (canonical player names) when mappings exist.
 Falls back to raw data for unmapped players.
 """
+import itertools
 import sqlite3
 from collections import defaultdict
 from typing import Optional
@@ -175,6 +176,68 @@ def get_pot_sizes(db_path: str = "poker.db") -> list:
     results = cursor.fetchall()
     conn.close()
     return results
+
+
+def get_per_session_stats(db_path: str = "poker.db", use_enriched: bool = True,
+                          min_games: int = 3) -> list:
+    """Get per-session profit/loss for each player.
+
+    Returns rows ordered by (player_id, session_start) with:
+        player_id, name, game_id, session_start, session_profit
+    Only players with >= min_games sessions are included.
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    if use_enriched:
+        query = """
+            SELECT sub.player_id, sub.name, sub.game_id,
+                   sub.session_start, sub.session_profit
+            FROM (
+                SELECT
+                    COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) AS player_id,
+                    COALESCE(cp.name, p.name)                            AS name,
+                    h.game_id,
+                    MIN(h.started_at)                                    AS session_start,
+                    SUM(hp.net_gain)                                     AS session_profit,
+                    COUNT(h.game_id) OVER (
+                        PARTITION BY COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id)
+                    ) AS games_played
+                FROM players p
+                JOIN hand_players hp ON p.id = hp.player_id
+                JOIN hands h         ON hp.hand_id = h.id
+                LEFT JOIN player_mappings pm
+                    ON p.id = pm.raw_player_id AND p.name = pm.nickname
+                LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
+                GROUP BY COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id), h.game_id
+            ) sub
+            WHERE sub.games_played >= ?
+            ORDER BY sub.player_id, sub.session_start, sub.game_id
+        """
+    else:
+        query = """
+            SELECT sub.player_id, sub.name, sub.game_id,
+                   sub.session_start, sub.session_profit
+            FROM (
+                SELECT
+                    p.id AS player_id, p.name,
+                    h.game_id,
+                    MIN(h.started_at) AS session_start,
+                    SUM(hp.net_gain)  AS session_profit,
+                    COUNT(h.game_id) OVER (PARTITION BY p.id) AS games_played
+                FROM players p
+                JOIN hand_players hp ON p.id = hp.player_id
+                JOIN hands h         ON hp.hand_id = h.id
+                GROUP BY p.id, h.game_id
+            ) sub
+            WHERE sub.games_played >= ?
+            ORDER BY sub.player_id, sub.session_start, sub.game_id
+        """
+
+    cursor.execute(query, (min_games,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
 
 def plot_player_statistics(db_path: str = "poker.db", save_path: Optional[str] = None,
@@ -462,6 +525,128 @@ def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = No
         plt.show()
 
 
+def _compute_trend(profits: list) -> str:
+    """Compare average of last 3 sessions to the 3 before that.
+
+    Returns '↑' (improving), '↓' (declining), or '' (insufficient data / flat).
+    Requires at least 4 sessions for a meaningful comparison.
+    """
+    n = len(profits)
+    if n < 4:
+        return ''
+    recent = profits[-3:]
+    prior = profits[-6:-3] if n >= 6 else profits[:-3]
+    recent_avg = sum(recent) / len(recent)
+    prior_avg = sum(prior) / len(prior)
+    if recent_avg > prior_avg:
+        return '↑'
+    elif recent_avg < prior_avg:
+        return '↓'
+    return ''
+
+
+def plot_momentum(db_path: str = "poker.db", save_path: Optional[str] = None,
+                  min_games: int = 3):
+    """Create per-session profit/loss momentum chart with trend indicators.
+
+    Each player gets a line where x = session number and y = session profit/loss.
+    Players with 4+ sessions show an arrow annotation (↑ or ↓) at their last
+    data point indicating recent form vs the sessions before that.
+    """
+    # --- colours matching the dashboard dark theme ---
+    BG = '#1a1a2e'
+    PANEL_BG = '#16213e'
+    BORDER = '#0f3460'
+    ACCENT = '#e94560'
+    POSITIVE = '#4caf50'
+    TEXT = '#eeeeee'
+    NEUTRAL = '#aaaaaa'
+    LINE_COLORS = [
+        '#e94560', '#4caf50', '#e9c46a', '#2a9d8f',
+        '#a78bfa', '#38bdf8', '#fb923c', '#f472b6',
+    ]
+
+    rows = get_per_session_stats(db_path, use_enriched=True, min_games=min_games)
+    if not rows:
+        print("No momentum data available (insufficient sessions)")
+        return
+
+    # Group by player, preserving chronological order
+    player_sessions: dict = defaultdict(list)
+    player_names: dict = {}
+    for row in rows:
+        player_sessions[row['player_id']].append(row['session_profit'] or 0)
+        player_names[row['player_id']] = row['name']
+
+    # Sort players by total profit descending for a consistent legend order
+    sorted_players = sorted(
+        player_sessions.items(),
+        key=lambda kv: sum(kv[1]),
+        reverse=True,
+    )
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    fig.patch.set_facecolor(BG)
+    ax.set_facecolor(PANEL_BG)
+
+    color_cycle = itertools.cycle(LINE_COLORS)
+    max_sessions = max(len(profits) for _, profits in sorted_players)
+
+    for player_id, profits in sorted_players:
+        name = player_names[player_id]
+        x_vals = list(range(1, len(profits) + 1))
+        line_color = next(color_cycle)
+
+        ax.plot(x_vals, profits, color=line_color, label=name,
+                linewidth=2, marker='o', markersize=5, alpha=0.9)
+
+        trend = _compute_trend(profits)
+        if trend:
+            trend_color = POSITIVE if trend == '↑' else ACCENT
+            ax.annotate(
+                trend,
+                xy=(len(profits), profits[-1]),
+                xytext=(6, 0),
+                textcoords='offset points',
+                color=trend_color,
+                fontsize=12,
+                fontweight='bold',
+                va='center',
+            )
+
+    # Zero reference line
+    ax.axhline(y=0, color=BORDER, linestyle='--', linewidth=1.2, alpha=0.8)
+
+    # Axes styling
+    ax.set_xlabel('Session Number', color=TEXT, fontsize=11)
+    ax.set_ylabel('Session Profit / Loss', color=TEXT, fontsize=11)
+    ax.set_title('Player Momentum — Per-Session Profit / Loss',
+                 color=ACCENT, fontsize=14, fontweight='bold', pad=12)
+    ax.set_xticks(range(1, max_sessions + 1))
+    ax.tick_params(colors=TEXT)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(BORDER)
+    ax.grid(True, alpha=0.15, color=NEUTRAL)
+
+    legend = ax.legend(
+        loc='upper left',
+        fontsize=8,
+        ncol=2,
+        framealpha=0.4,
+        facecolor=PANEL_BG,
+        edgecolor=BORDER,
+        labelcolor=TEXT,
+    )
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+        print(f"Saved: {save_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
 def plot_pipeline_diagram(save_path: Optional[str] = None):
     """Create a visual diagram of the data pipeline architecture."""
     fig, ax = plt.subplots(figsize=(14, 7))
@@ -570,6 +755,7 @@ def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = "."
     plot_player_statistics(db_path, str(output / "player_statistics.png"), min_games=min_games)
     plot_hand_analysis(db_path, str(output / "hand_analysis.png"))
     plot_session_trends(db_path, str(output / "session_trends.png"), min_games=min_games)
+    plot_momentum(db_path, str(output / "momentum.png"), min_games=min_games)
     plot_pipeline_diagram(str(output / "pipeline_diagram.png"))
 
     print("\nAll visualizations generated!")
