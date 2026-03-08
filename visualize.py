@@ -37,8 +37,8 @@ def get_player_statistics(db_path: str = "poker.db", use_enriched: bool = True,
                 COALESCE(cp.name, p.name) as name,
                 COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) as id,
                 COUNT(DISTINCT hp.hand_id) as hands_played,
-                SUM(hp.net_gain) as total_profit,
-                AVG(hp.net_gain) as avg_profit_per_hand,
+                SUM(hp.net_gain) / 100.0 as total_profit,
+                AVG(hp.net_gain) / 100.0 as avg_profit_per_hand,
                 SUM(CASE WHEN hp.net_gain > 0 THEN 1 ELSE 0 END) as hands_won,
                 SUM(CASE WHEN hp.showed_cards = 1 THEN 1 ELSE 0 END) as showdowns,
                 COUNT(DISTINCT h.game_id) as games_played
@@ -58,8 +58,8 @@ def get_player_statistics(db_path: str = "poker.db", use_enriched: bool = True,
                 p.id,
                 p.name,
                 COUNT(DISTINCT hp.hand_id) as hands_played,
-                SUM(hp.net_gain) as total_profit,
-                AVG(hp.net_gain) as avg_profit_per_hand,
+                SUM(hp.net_gain) / 100.0 as total_profit,
+                AVG(hp.net_gain) / 100.0 as avg_profit_per_hand,
                 SUM(CASE WHEN hp.net_gain > 0 THEN 1 ELSE 0 END) as hands_won,
                 SUM(CASE WHEN hp.showed_cards = 1 THEN 1 ELSE 0 END) as showdowns,
                 COUNT(DISTINCT h.game_id) as games_played
@@ -166,7 +166,7 @@ def get_pot_sizes(db_path: str = "poker.db") -> list:
         SELECT
             h.hand_number,
             h.started_at,
-            MAX(hr.pot) as pot_size
+            MAX(hr.pot) / 100.0 as pot_size
         FROM hands h
         JOIN hand_results hr ON h.id = hr.hand_id
         GROUP BY h.id
@@ -199,7 +199,7 @@ def get_per_session_stats(db_path: str = "poker.db", use_enriched: bool = True,
                     COALESCE(cp.name, p.name)                            AS name,
                     h.game_id,
                     MIN(h.started_at)                                    AS session_start,
-                    SUM(hp.net_gain)                                     AS session_profit,
+                    SUM(hp.net_gain) / 100.0                              AS session_profit,
                     COUNT(h.game_id) OVER (
                         PARTITION BY COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id)
                     ) AS games_played
@@ -223,7 +223,7 @@ def get_per_session_stats(db_path: str = "poker.db", use_enriched: bool = True,
                     p.id AS player_id, p.name,
                     h.game_id,
                     MIN(h.started_at) AS session_start,
-                    SUM(hp.net_gain)  AS session_profit,
+                    SUM(hp.net_gain) / 100.0  AS session_profit,
                     COUNT(h.game_id) OVER (PARTITION BY p.id) AS games_played
                 FROM players p
                 JOIN hand_players hp ON p.id = hp.player_id
@@ -416,7 +416,7 @@ def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = No
             h.game_id,
             COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) as player_id,
             COALESCE(cp.name, p.name) as name,
-            hp.net_gain
+            hp.net_gain / 100.0 as net_gain
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id
         JOIN players p ON hp.player_id = p.id
@@ -442,7 +442,7 @@ def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = No
 
     # Get pot sizes with global index
     cursor.execute("""
-        SELECT h.id as hand_id, MAX(hr.pot) as pot_size
+        SELECT h.id as hand_id, MAX(hr.pot) / 100.0 as pot_size
         FROM hands h
         JOIN hand_results hr ON h.id = hr.hand_id
         GROUP BY h.id

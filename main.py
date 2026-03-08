@@ -60,7 +60,7 @@ def print_stats(db_path: str = DB_PATH):
         SELECT
             p.name,
             COUNT(DISTINCT hp.hand_id) as hands,
-            COALESCE(SUM(hp.net_gain), 0) as profit
+            COALESCE(SUM(hp.net_gain), 0) / 100.0 as profit
         FROM players p
         JOIN hand_players hp ON p.id = hp.player_id
         GROUP BY p.id

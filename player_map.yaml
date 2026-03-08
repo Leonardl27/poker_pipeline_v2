@@ -103,6 +103,8 @@ canonical_players:
     aliases:
       - id: "ctxg9uHKIE"
         nickname: "Kody Jo"
+      - id: "3FpdwMZeVV"
+        nickname: "kojo"
 
   - id: 10
     name: "Matt Lee"
@@ -207,15 +209,21 @@ canonical_players:
     aliases:
       - id: "fhqpX7EysR"
         nickname: "BlitzRyan"
+      - id: "VJU-hGD3L_"
+        nickname: "BlitzRyan"
 
   - id: 23
     name: "Justin Coffman"
     aliases:
       - id: "KzbXCXdTU7"
         nickname: "SMOKEY"
+      - id: "oJNWU-jnlA"
+        nickname: "SMOKEY"
 
   - id: 24
     name: "Ross Sigler"
     aliases:
       - id: "I55bsHWYKm"
+        nickname: "Roscoe"
+      - id: "IxqhiMgj9P"
         nickname: "Roscoe"
