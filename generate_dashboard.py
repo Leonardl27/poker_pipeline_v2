@@ -137,10 +137,11 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         ("hand_analysis.png", "Hand Analysis",
          "Distribution of winning hand types and action frequency across all sessions."),
         ("session_trends.png", "Session Trends",
-         "Cumulative profit/loss progression and pot sizes across all hands."),
+         "Top chart tracks cumulative profit/loss for the 3 biggest winners and 2 biggest losers. "
+         "Bottom heatmap shows every player\u2019s profit/loss per session at a glance."),
         ("momentum.png", "Player Momentum",
-         "Per-session profit/loss for each player. \u2191/\u2193 arrows show whether a player\u2019s "
-         "recent form (last 3 sessions) is up or down vs the 3 sessions before that."),
+         "Individual per-session profit/loss for each player. Green bars = winning sessions, "
+         "red bars = losing sessions. \u2191/\u2193 arrows indicate recent trend direction."),
         ("pipeline_diagram.png", "Pipeline Architecture",
          "How data flows from raw JSON replay files through the processing pipeline to this dashboard."),
     ]
