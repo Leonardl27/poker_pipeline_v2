@@ -379,150 +379,161 @@ def plot_hand_analysis(db_path: str = "poker.db", save_path: Optional[str] = Non
 
 def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = None,
                         min_games: int = 0):
-    """Create session trend visualizations with global hand indexing across sessions."""
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
+    """Session trends: top-5 cumulative P/L lines + player-session heatmap.
 
-    # Get all hands ordered by timestamp, assign a global sequential index
-    cursor.execute("""
-        SELECT h.id as hand_id, h.game_id, h.hand_number, h.started_at
-        FROM hands h
-        ORDER BY h.started_at, h.hand_number
-    """)
-    all_hands = cursor.fetchall()
+    Top subplot shows cumulative profit/loss curves for the 3 biggest winners
+    and 2 biggest losers, plotted at per-session granularity for clarity.
 
-    if not all_hands:
+    Bottom subplot is a heatmap grid (players x sessions) with a diverging
+    red-green colormap and dollar annotations inside each cell.
+    """
+    import numpy as np
+    from matplotlib.colors import TwoSlopeNorm
+
+    # --- colours matching the dashboard dark theme ---
+    BG = '#1a1a2e'
+    PANEL_BG = '#16213e'
+    BORDER = '#0f3460'
+    ACCENT = '#e94560'
+    POSITIVE = '#4caf50'
+    TEXT = '#eeeeee'
+    NEUTRAL = '#aaaaaa'
+    TOP_COLORS = ['#4caf50', '#2a9d8f', '#38bdf8', '#fb923c', '#e94560']
+
+    rows = get_per_session_stats(db_path, use_enriched=True, min_games=min_games)
+    if not rows:
         print("No session data available")
-        conn.close()
         return
 
-    # Build global index and detect session boundaries
-    hand_id_to_global = {}
-    session_boundaries = []
-    prev_game_id = None
-    for i, hand in enumerate(all_hands):
-        hand_id_to_global[hand['hand_id']] = i + 1
-        if hand['game_id'] != prev_game_id:
-            if prev_game_id is not None:
-                session_boundaries.append(i + 1)
-            prev_game_id = hand['game_id']
+    # Group by player, preserving chronological order
+    player_sessions: dict = defaultdict(list)
+    player_names: dict = {}
+    for row in rows:
+        player_sessions[row['player_id']].append(row['session_profit'] or 0)
+        player_names[row['player_id']] = row['name']
 
-    total_hands = len(all_hands)
+    # Sort players by total profit descending
+    sorted_players = sorted(
+        player_sessions.items(),
+        key=lambda kv: sum(kv[1]),
+        reverse=True,
+    )
 
-    # Get player net gains per hand, with canonical names
-    cursor.execute("""
-        SELECT
-            hp.hand_id,
-            h.game_id,
-            COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) as player_id,
-            COALESCE(cp.name, p.name) as name,
-            hp.net_gain / 100.0 as net_gain
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
-        JOIN players p ON hp.player_id = p.id
-        LEFT JOIN player_mappings pm ON p.id = pm.raw_player_id AND p.name = pm.nickname
-        LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
-        ORDER BY h.started_at, h.hand_number
-    """)
-    player_data = cursor.fetchall()
+    n_players = len(sorted_players)
+    max_sessions = max(len(profits) for _, profits in sorted_players)
 
-    # Count games per player for filtering
-    cursor.execute("""
-        SELECT
-            COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) as player_id,
-            COUNT(DISTINCT h.game_id) as games_played
-        FROM players p
-        JOIN hand_players hp ON p.id = hp.player_id
-        JOIN hands h ON hp.hand_id = h.id
-        LEFT JOIN player_mappings pm ON p.id = pm.raw_player_id AND p.name = pm.nickname
-        LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
-        GROUP BY player_id
-    """)
-    player_games = {row['player_id']: row['games_played'] for row in cursor.fetchall()}
+    # --- Pick top 3 winners + bottom 2 losers for cumulative chart ---
+    top3 = sorted_players[:3]
+    bottom2 = sorted_players[-2:] if n_players > 3 else []
+    featured = top3 + [p for p in bottom2 if p not in top3]
 
-    # Get pot sizes with global index
-    cursor.execute("""
-        SELECT h.id as hand_id, MAX(hr.pot) / 100.0 as pot_size
-        FROM hands h
-        JOIN hand_results hr ON h.id = hr.hand_id
-        GROUP BY h.id
-    """)
-    pot_by_hand = {row['hand_id']: row['pot_size'] or 0 for row in cursor.fetchall()}
+    # ---- Figure layout ---------------------------------------------------
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(18, 14),
+        gridspec_kw={'height_ratios': [1, 1.3]},
+    )
+    fig.patch.set_facecolor(BG)
+    fig.suptitle('Session Trends', color=ACCENT, fontsize=16,
+                 fontweight='bold', y=0.98)
 
-    conn.close()
+    # ── Top subplot: cumulative P/L for featured players ──────────────────
+    ax1.set_facecolor(PANEL_BG)
 
-    # Build cumulative profit per player (filtered by min_games)
-    player_cumulative = defaultdict(lambda: {"indices": [], "cumulative": [], "name": ""})
+    for i, (player_id, profits) in enumerate(featured):
+        cumulative = []
+        running = 0
+        for p in profits:
+            running += p
+            cumulative.append(running)
 
-    for row in player_data:
-        pid = row['player_id']
-        if min_games > 0 and player_games.get(pid, 0) < min_games:
-            continue
+        x_vals = list(range(1, len(cumulative) + 1))
+        color = TOP_COLORS[i % len(TOP_COLORS)]
+        name = player_names[player_id]
 
-        global_idx = hand_id_to_global.get(row['hand_id'])
-        if global_idx is None:
-            continue
+        ax1.plot(x_vals, cumulative, color=color, linewidth=2.5, alpha=0.9,
+                 marker='o', markersize=5)
 
-        net_gain = row['net_gain'] or 0
-        player_cumulative[pid]["name"] = row['name']
+        # End-of-line label instead of legend
+        ax1.annotate(
+            name,
+            xy=(x_vals[-1], cumulative[-1]),
+            xytext=(8, 0),
+            textcoords='offset points',
+            color=color,
+            fontsize=9,
+            fontweight='bold',
+            va='center',
+        )
 
-        prev = player_cumulative[pid]["cumulative"][-1] if player_cumulative[pid]["cumulative"] else 0
-        player_cumulative[pid]["indices"].append(global_idx)
-        player_cumulative[pid]["cumulative"].append(prev + net_gain)
+    ax1.axhline(y=0, color=BORDER, linestyle='--', linewidth=1, alpha=0.7)
+    ax1.set_xlabel('Session Number', color=TEXT, fontsize=11)
+    ax1.set_ylabel('Cumulative Profit / Loss ($)', color=TEXT, fontsize=11)
+    ax1.set_title('Cumulative P/L — Top 3 Winners & Bottom 2 Losers',
+                  color=TEXT, fontsize=12, pad=8)
+    ax1.set_xticks(range(1, max_sessions + 1))
+    ax1.tick_params(colors=NEUTRAL)
+    for spine in ax1.spines.values():
+        spine.set_edgecolor(BORDER)
+    ax1.grid(True, alpha=0.12, color=NEUTRAL)
 
-    # Sort players by final profit for consistent legend ordering
-    sorted_players = sorted(player_cumulative.items(),
-                            key=lambda x: x[1]["cumulative"][-1] if x[1]["cumulative"] else 0,
-                            reverse=True)
+    # ── Bottom subplot: player x session heatmap ──────────────────────────
+    ax2.set_facecolor(PANEL_BG)
 
-    fig, axes = plt.subplots(2, 1, figsize=(16, 10))
-    fig.suptitle('Session Trends', fontsize=16, fontweight='bold')
+    # Build the data matrix (players sorted by total profit)
+    names_ordered = [player_names[pid] for pid, _ in sorted_players]
+    data_matrix = np.full((n_players, max_sessions), np.nan)
+    for row_idx, (player_id, profits) in enumerate(sorted_players):
+        for col_idx, val in enumerate(profits):
+            data_matrix[row_idx, col_idx] = val
 
-    # Top: Cumulative profit across all sessions
-    ax1 = axes[0]
-    for pid, data in sorted_players:
-        ax1.plot(data["indices"], data["cumulative"], label=data["name"], linewidth=1.5, alpha=0.85)
+    # Diverging colormap centered at 0
+    vmax = np.nanmax(np.abs(data_matrix)) if not np.all(np.isnan(data_matrix)) else 10
+    norm = TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
 
-    # Draw session boundary lines
-    for boundary in session_boundaries:
-        ax1.axvline(x=boundary, color='gray', linestyle=':', linewidth=0.5, alpha=0.5)
+    # Use red-green diverging colors built from the theme palette
+    from matplotlib.colors import LinearSegmentedColormap
+    cmap = LinearSegmentedColormap.from_list(
+        'poker_rg', [ACCENT, PANEL_BG, POSITIVE], N=256
+    )
 
-    ax1.set_xlabel(f'Hand (sequential across {len(session_boundaries) + 1} sessions)')
-    ax1.set_ylabel('Cumulative Profit/Loss')
-    ax1.set_title('All-Time Cumulative Profit/Loss')
-    ax1.legend(loc='upper left', fontsize=8, ncol=2, framealpha=0.9)
-    ax1.axhline(y=0, color='black', linestyle='--', linewidth=0.5)
-    ax1.grid(True, alpha=0.2)
+    im = ax2.imshow(data_matrix, aspect='auto', cmap=cmap, norm=norm,
+                    interpolation='nearest')
 
-    # Bottom: Pot size across all sessions
-    ax2 = axes[1]
-    global_pot_indices = []
-    global_pot_sizes = []
-    for hand in all_hands:
-        gidx = hand_id_to_global[hand['hand_id']]
-        pot = pot_by_hand.get(hand['hand_id'], 0)
-        if pot > 0:
-            global_pot_indices.append(gidx)
-            global_pot_sizes.append(pot)
+    # Annotate cells with dollar values
+    for r in range(n_players):
+        for c in range(max_sessions):
+            val = data_matrix[r, c]
+            if np.isnan(val):
+                continue
+            # Choose text color for readability
+            txt_color = TEXT if abs(val) > vmax * 0.3 else NEUTRAL
+            label = f'${val:+.0f}' if abs(val) >= 1 else f'${val:+.2f}'
+            fontsize = 7 if max_sessions > 12 else 8
+            ax2.text(c, r, label, ha='center', va='center',
+                     color=txt_color, fontsize=fontsize, fontweight='bold')
 
-    if global_pot_sizes:
-        ax2.bar(global_pot_indices, global_pot_sizes, color='gold', alpha=0.7, width=1.0)
-        for boundary in session_boundaries:
-            ax2.axvline(x=boundary, color='gray', linestyle=':', linewidth=0.5, alpha=0.5)
-        ax2.set_xlabel(f'Hand (sequential across {len(session_boundaries) + 1} sessions)')
-        ax2.set_ylabel('Pot Size')
-        ax2.set_title('Pot Size by Hand')
-        ax2.grid(True, alpha=0.2, axis='y')
-    else:
-        ax2.text(0.5, 0.5, 'No pot data available', ha='center', va='center')
+    ax2.set_xticks(range(max_sessions))
+    ax2.set_xticklabels(range(1, max_sessions + 1))
+    ax2.set_yticks(range(n_players))
+    ax2.set_yticklabels(names_ordered)
+    ax2.set_xlabel('Session Number', color=TEXT, fontsize=11)
+    ax2.set_title('Session Profit/Loss by Player',
+                  color=TEXT, fontsize=12, pad=8)
+    ax2.tick_params(colors=NEUTRAL, labelsize=9)
 
-    plt.tight_layout()
+    # Colorbar
+    cbar = fig.colorbar(im, ax=ax2, pad=0.02, shrink=0.8)
+    cbar.set_label('Profit / Loss ($)', color=TEXT, fontsize=10)
+    cbar.ax.tick_params(colors=NEUTRAL)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
 
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
         print(f"Saved: {save_path}")
     else:
         plt.show()
+    plt.close(fig)
 
 
 def _compute_trend(profits: list) -> str:
@@ -547,12 +558,14 @@ def _compute_trend(profits: list) -> str:
 
 def plot_momentum(db_path: str = "poker.db", save_path: Optional[str] = None,
                   min_games: int = 3):
-    """Create per-session profit/loss momentum chart with trend indicators.
+    """Small-multiples grid of per-session profit/loss bars, one subplot per player.
 
-    Each player gets a line where x = session number and y = session profit/loss.
-    Players with 4+ sessions show an arrow annotation (↑ or ↓) at their last
-    data point indicating recent form vs the sessions before that.
+    Each mini chart shows green bars for winning sessions and red bars for losing
+    sessions.  Players with 4+ sessions get a trend arrow (↑ / ↓) in the title
+    comparing recent form to earlier sessions.
     """
+    import math
+
     # --- colours matching the dashboard dark theme ---
     BG = '#1a1a2e'
     PANEL_BG = '#16213e'
@@ -561,10 +574,6 @@ def plot_momentum(db_path: str = "poker.db", save_path: Optional[str] = None,
     POSITIVE = '#4caf50'
     TEXT = '#eeeeee'
     NEUTRAL = '#aaaaaa'
-    LINE_COLORS = [
-        '#e94560', '#4caf50', '#e9c46a', '#2a9d8f',
-        '#a78bfa', '#38bdf8', '#fb923c', '#f472b6',
-    ]
 
     rows = get_per_session_stats(db_path, use_enriched=True, min_games=min_games)
     if not rows:
@@ -578,67 +587,71 @@ def plot_momentum(db_path: str = "poker.db", save_path: Optional[str] = None,
         player_sessions[row['player_id']].append(row['session_profit'] or 0)
         player_names[row['player_id']] = row['name']
 
-    # Sort players by total profit descending for a consistent legend order
+    # Sort players by total profit descending
     sorted_players = sorted(
         player_sessions.items(),
         key=lambda kv: sum(kv[1]),
         reverse=True,
     )
 
-    fig, ax = plt.subplots(figsize=(14, 7))
-    fig.patch.set_facecolor(BG)
-    ax.set_facecolor(PANEL_BG)
+    n_players = len(sorted_players)
+    ncols = 4
+    nrows = math.ceil(n_players / ncols)
 
-    color_cycle = itertools.cycle(LINE_COLORS)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(18, 3.5 * nrows))
+    fig.patch.set_facecolor(BG)
+    fig.suptitle('Player Momentum — Per-Session Profit / Loss',
+                 color=ACCENT, fontsize=16, fontweight='bold', y=0.98)
+
+    # Flatten axes for easy indexing
+    if nrows == 1 and ncols == 1:
+        axes_flat = [axes]
+    else:
+        axes_flat = axes.flatten()
+
+    # Shared y-axis scale across all subplots
+    all_profits = [p for _, profits in sorted_players for p in profits]
+    y_max = max(abs(v) for v in all_profits) if all_profits else 10
+    y_pad = y_max * 0.15
     max_sessions = max(len(profits) for _, profits in sorted_players)
 
-    for player_id, profits in sorted_players:
+    for idx, (player_id, profits) in enumerate(sorted_players):
+        ax = axes_flat[idx]
+        ax.set_facecolor(PANEL_BG)
+
         name = player_names[player_id]
         x_vals = list(range(1, len(profits) + 1))
-        line_color = next(color_cycle)
+        colors = [POSITIVE if v >= 0 else ACCENT for v in profits]
 
-        ax.plot(x_vals, profits, color=line_color, label=name,
-                linewidth=2, marker='o', markersize=5, alpha=0.9)
+        ax.bar(x_vals, profits, color=colors, width=0.7, alpha=0.9)
+        ax.axhline(y=0, color=BORDER, linestyle='-', linewidth=0.8, alpha=0.6)
 
+        # Trend arrow in title
         trend = _compute_trend(profits)
+        trend_str = ''
         if trend:
-            trend_color = POSITIVE if trend == '↑' else ACCENT
-            ax.annotate(
-                trend,
-                xy=(len(profits), profits[-1]),
-                xytext=(6, 0),
-                textcoords='offset points',
-                color=trend_color,
-                fontsize=12,
-                fontweight='bold',
-                va='center',
-            )
+            trend_str = f'  {trend}'
 
-    # Zero reference line
-    ax.axhline(y=0, color=BORDER, linestyle='--', linewidth=1.2, alpha=0.8)
+        ax.set_title(f'{name}{trend_str}', color=TEXT, fontsize=10,
+                     fontweight='bold', pad=4)
+        ax.set_ylim(-y_max - y_pad, y_max + y_pad)
+        ax.set_xticks(range(1, max_sessions + 1))
+        ax.tick_params(colors=NEUTRAL, labelsize=7)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(BORDER)
+        ax.grid(True, alpha=0.1, color=NEUTRAL, axis='y')
 
-    # Axes styling
-    ax.set_xlabel('Session Number', color=TEXT, fontsize=11)
-    ax.set_ylabel('Session Profit / Loss', color=TEXT, fontsize=11)
-    ax.set_title('Player Momentum — Per-Session Profit / Loss',
-                 color=ACCENT, fontsize=14, fontweight='bold', pad=12)
-    ax.set_xticks(range(1, max_sessions + 1))
-    ax.tick_params(colors=TEXT)
-    for spine in ax.spines.values():
-        spine.set_edgecolor(BORDER)
-    ax.grid(True, alpha=0.15, color=NEUTRAL)
+        # Only show axis labels on edge subplots
+        if idx % ncols == 0:
+            ax.set_ylabel('P/L ($)', color=NEUTRAL, fontsize=8)
+        if idx >= (nrows - 1) * ncols:
+            ax.set_xlabel('Session', color=NEUTRAL, fontsize=8)
 
-    legend = ax.legend(
-        loc='upper left',
-        fontsize=8,
-        ncol=2,
-        framealpha=0.4,
-        facecolor=PANEL_BG,
-        edgecolor=BORDER,
-        labelcolor=TEXT,
-    )
+    # Hide unused subplots
+    for idx in range(n_players, len(axes_flat)):
+        axes_flat[idx].set_visible(False)
 
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
         print(f"Saved: {save_path}")
