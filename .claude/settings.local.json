@@ -19,7 +19,13 @@
       "Bash(gh run watch:*)",
       "Bash(gh api:*)",
       "Bash(git commit:*)",
-      "Bash(gh workflow run:*)"
+      "Bash(gh workflow run:*)",
+      "Bash(git checkout -b feature/player-name-masking)",
+      "Bash(git checkout main)",
+      "Bash(git checkout -b feature/momentum-dashboard)",
+      "Bash(gh pr:*)",
+      "Bash(git pull origin main)",
+      "Bash(python3 -c \":*)"
     ]
   }
 }
