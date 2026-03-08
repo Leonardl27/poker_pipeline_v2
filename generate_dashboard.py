@@ -98,8 +98,8 @@ def get_table_data(db_path: str) -> list:
             "hands_played": hands_played,
             "hands_won": hands_won,
             "win_rate": round(win_rate, 1),
-            "total_profit": total_profit,
-            "avg_profit": round(avg_profit, 1),
+            "total_profit": round(total_profit, 2),
+            "avg_profit": round(avg_profit, 2),
             "showdowns": row["showdowns"] or 0,
         })
     return rows
@@ -113,9 +113,9 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
     table_rows = ""
     for row in table_data:
         profit_class = "positive" if row["total_profit"] >= 0 else "negative"
-        profit_display = f"+{row['total_profit']}" if row["total_profit"] > 0 else str(row["total_profit"])
+        profit_display = f"+{row['total_profit']:.2f}" if row["total_profit"] > 0 else f"{row['total_profit']:.2f}"
         avg_class = "positive" if row["avg_profit"] >= 0 else "negative"
-        avg_display = f"+{row['avg_profit']:.1f}" if row["avg_profit"] > 0 else f"{row['avg_profit']:.1f}"
+        avg_display = f"+{row['avg_profit']:.2f}" if row["avg_profit"] > 0 else f"{row['avg_profit']:.2f}"
 
         table_rows += f"""
                 <tr>

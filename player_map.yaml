@@ -87,6 +87,8 @@ canonical_players:
         nickname: "injun"
       - id: "BThjG8wm-H"
         nickname: "injun joe"
+      - id: "BThjG8wm-H"
+        nickname: "joe"
 
   - id: 8
     name: "Christian Klonowski"
