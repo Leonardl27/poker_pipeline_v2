@@ -129,6 +129,14 @@ def ingest_file(json_path: str, db_path: str = "poker.db") -> dict:
                       cards[3] if len(cards) > 3 else None,
                       cards[4] if len(cards) > 4 else None))
 
+                # Also insert into events table so street boundaries are
+                # available for HUD stat calculations (VPIP, PFR, ATS)
+                cursor.execute("""
+                    INSERT INTO events (hand_id, event_time, event_type, seat, value)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (hand_id, event.get("at"), event_type, None, None))
+                stats["events_added"] += 1
+
             # Handle hand results
             elif event_type == 10:
                 seat = payload.get("seat")

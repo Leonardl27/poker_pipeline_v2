@@ -18,6 +18,7 @@ from database import get_connection
 from ingest import ingest_directory
 from mappings import load_mappings
 from visualize import get_player_statistics, generate_all_visualizations
+from hud_stats import calculate_hud_stats
 
 DB_PATH = "poker.db"
 RAW_DIR = "raw"
@@ -84,6 +85,11 @@ def generate_chart_base64(db_path: str, output_dir: str) -> dict:
 def get_table_data(db_path: str) -> list:
     """Get player statistics formatted for the HTML leaderboard table."""
     stats = get_player_statistics(db_path, use_enriched=True, min_games=MIN_GAMES)
+
+    # Get aggregate HUD stats (VPIP/PFR/ATS across all sessions)
+    hud = calculate_hud_stats(db_path)
+    hud_by_name = {h["name"]: h for h in hud}
+
     rows = []
     for row in stats:
         hands_played = row["hands_played"]
@@ -91,6 +97,9 @@ def get_table_data(db_path: str) -> list:
         total_profit = row["total_profit"] or 0
         avg_profit = row["avg_profit_per_hand"] or 0
         win_rate = (hands_won / hands_played * 100) if hands_played > 0 else 0
+
+        # Merge HUD stats for this player
+        h = hud_by_name.get(row["name"], {})
 
         rows.append({
             "name": row["name"],
@@ -101,6 +110,10 @@ def get_table_data(db_path: str) -> list:
             "total_profit": round(total_profit, 2),
             "avg_profit": round(avg_profit, 2),
             "showdowns": row["showdowns"] or 0,
+            "vpip_pct": round(h.get("vpip_pct", 0), 1),
+            "conv_vpip_pct": round(h.get("conv_vpip_pct", 0), 1),
+            "pfr_pct": round(h.get("pfr_pct", 0), 1),
+            "ats_pct": h.get("ats_pct"),
         })
     return rows
 
@@ -117,6 +130,8 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         avg_class = "positive" if row["avg_profit"] >= 0 else "negative"
         avg_display = f"+{row['avg_profit']:.2f}" if row["avg_profit"] > 0 else f"{row['avg_profit']:.2f}"
 
+        ats_display = f"{row['ats_pct']:.1f}%" if row['ats_pct'] is not None else "-"
+
         table_rows += f"""
                 <tr>
                     <td>{row['name']}</td>
@@ -124,6 +139,10 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
                     <td>{row['hands_played']}</td>
                     <td>{row['hands_won']}</td>
                     <td>{row['win_rate']:.1f}%</td>
+                    <td>{row['vpip_pct']:.1f}%</td>
+                    <td>{row['conv_vpip_pct']:.1f}%</td>
+                    <td>{row['pfr_pct']:.1f}%</td>
+                    <td>{ats_display}</td>
                     <td class="{profit_class}">{profit_display}</td>
                     <td class="{avg_class}">{avg_display}</td>
                     <td>{row['showdowns']}</td>
@@ -219,6 +238,7 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         }}
         .table-section {{
             padding: 30px 20px;
+            overflow-x: auto;
         }}
         .table-section h2 {{
             color: #e94560;
@@ -356,9 +376,13 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
                         <th onclick="sortTable(2, 'number')">Hands &#8597;</th>
                         <th onclick="sortTable(3, 'number')">Wins &#8597;</th>
                         <th onclick="sortTable(4, 'number')">Win Rate &#8597;</th>
-                        <th onclick="sortTable(5, 'number')">Profit/Loss &#8597;</th>
-                        <th onclick="sortTable(6, 'number')">Avg/Hand &#8597;</th>
-                        <th onclick="sortTable(7, 'number')">Showdowns &#8597;</th>
+                        <th onclick="sortTable(5, 'number')" title="PokerNow VPIP: voluntary money on any street (preflop + postflop)">PN VPIP% &#8597;</th>
+                        <th onclick="sortTable(6, 'number')" title="Conventional VPIP: voluntary money preflop only">VPIP% &#8597;</th>
+                        <th onclick="sortTable(7, 'number')" title="Pre-Flop Raise">PFR% &#8597;</th>
+                        <th onclick="sortTable(8, 'number')" title="Attempt to Steal">ATS% &#8597;</th>
+                        <th onclick="sortTable(9, 'number')">Profit/Loss &#8597;</th>
+                        <th onclick="sortTable(10, 'number')">Avg/Hand &#8597;</th>
+                        <th onclick="sortTable(11, 'number')">Showdowns &#8597;</th>
                     </tr>
                 </thead>
                 <tbody>{table_rows}
