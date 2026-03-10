@@ -163,7 +163,8 @@ def calculate_hud_stats(db_path: str = "poker.db",
     stats: dict[str, dict] = defaultdict(lambda: {
         "name": "",
         "hands": 0,
-        "vpip_hands": 0,
+        "vpip_hands": 0,       # PokerNow: voluntary money on any street
+        "conv_vpip_hands": 0,  # Conventional: voluntary money preflop only
         "pfr_hands": 0,
         "ats_opportunities": 0,
         "ats_attempts": 0,
@@ -263,24 +264,30 @@ def calculate_hud_stats(db_path: str = "poker.db",
                         s["ats_attempts"] += 1
                 continue  # skip VPIP/PFR for walks
 
-            # VPIP: did this player voluntarily put money in the pot?
-            # PokerNow counts VPIP across ALL streets (not just preflop).
-            # A BB who checks preflop but bets/calls postflop = VPIP.
-            # In PokerNow, RAISE(7)=call/limp, BET(8)=raise/bet, ALL_IN(16)=all-in
-            player_money = [e for e in events
-                            if e["seat"] == seat
-                            and e["event_type"] in _VPIP_TYPES]
-            vpip = len(player_money) > 0
-
-            # PFR: did this player raise preflop?
-            # Only BET(8) is a true raise in PokerNow encoding
+            # Preflop actions for this player (used by both VPIP variants + PFR)
             player_preflop = [e for e in preflop_events
                               if e["seat"] == seat
                               and e["event_type"] in _VPIP_TYPES]
+
+            # Conventional VPIP: voluntary money preflop only
+            # RAISE(7)=call/limp, BET(8)=raise, ALL_IN(16)=all-in
+            conv_vpip = len(player_preflop) > 0
+
+            # PokerNow VPIP: voluntary money on ANY street
+            # BB checking preflop but betting/calling postflop = VPIP
+            player_money_any = [e for e in events
+                                if e["seat"] == seat
+                                and e["event_type"] in _VPIP_TYPES]
+            pn_vpip = len(player_money_any) > 0
+
+            # PFR: did this player raise preflop?
+            # Only BET(8) is a true raise in PokerNow encoding
             pfr = any(e["event_type"] in _PFR_TYPES for e in player_preflop)
 
-            if vpip:
+            if pn_vpip:
                 s["vpip_hands"] += 1
+            if conv_vpip:
+                s["conv_vpip_hands"] += 1
             if pfr:
                 s["pfr_hands"] += 1
 
@@ -299,10 +306,12 @@ def calculate_hud_stats(db_path: str = "poker.db",
             "name": s["name"],
             "hands": s["hands"],
             "vpip_hands": s["vpip_hands"],
+            "conv_vpip_hands": s["conv_vpip_hands"],
             "pfr_hands": s["pfr_hands"],
             "ats_opportunities": s["ats_opportunities"],
             "ats_attempts": s["ats_attempts"],
             "vpip_pct": (s["vpip_hands"] / vpip_denom * 100) if vpip_denom > 0 else 0,
+            "conv_vpip_pct": (s["conv_vpip_hands"] / vpip_denom * 100) if vpip_denom > 0 else 0,
             "pfr_pct": (s["pfr_hands"] / s["hands"] * 100) if s["hands"] > 0 else 0,
             "ats_pct": (s["ats_attempts"] / s["ats_opportunities"] * 100)
                        if s["ats_opportunities"] > 0 else None,
