@@ -114,8 +114,106 @@ def get_table_data(db_path: str) -> list:
             "conv_vpip_pct": round(h.get("conv_vpip_pct", 0), 1),
             "pfr_pct": round(h.get("pfr_pct", 0), 1),
             "ats_pct": h.get("ats_pct"),
+            # New profile stats
+            "flop_seen_pct": round(h.get("flop_seen_pct", 0), 1),
+            "bb_defend_pct": (round(h["bb_defend_pct"], 1)
+                              if h.get("bb_defend_pct") is not None else None),
+            "bb_fold_to_steal_pct": (round(h["bb_fold_to_steal_pct"], 1)
+                                     if h.get("bb_fold_to_steal_pct") is not None else None),
+            "three_bet_pct": (round(h["three_bet_pct"], 1)
+                              if h.get("three_bet_pct") is not None else None),
         })
     return rows
+
+
+def _stat_bar_color(stat_name: str, value: float) -> str:
+    """Return a CSS color for a stat bar based on poker stat ranges."""
+    ranges = {
+        "vpip":     [(25, "#5b9bd5"), (40, "#4caf50"), (100, "#e94560")],
+        "pfr":      [(10, "#5b9bd5"), (20, "#4caf50"), (100, "#e94560")],
+        "three_bet":[(5,  "#5b9bd5"), (10, "#4caf50"), (100, "#e94560")],
+        "flop_seen":[(40, "#5b9bd5"), (60, "#4caf50"), (100, "#e94560")],
+        "bb_defend":[(40, "#e94560"), (60, "#4caf50"), (100, "#5b9bd5")],
+        "bb_fold":  [(30, "#4caf50"), (50, "#e9a945"), (100, "#e94560")],
+        "ats":      [(25, "#5b9bd5"), (40, "#4caf50"), (100, "#e94560")],
+    }
+    thresholds = ranges.get(stat_name, [(100, "#4caf50")])
+    for limit, color in thresholds:
+        if value <= limit:
+            return color
+    return thresholds[-1][1]
+
+
+def build_player_profiles_html(table_data: list) -> str:
+    """Generate collapsible player profile cards."""
+    profiles = ""
+    for row in table_data:
+        name = row["name"]
+        slug = name.lower().replace(" ", "-").replace("'", "")
+        profit = row["total_profit"]
+        profit_class = "positive" if profit >= 0 else "negative"
+        profit_display = f"+${profit:.2f}" if profit > 0 else f"-${abs(profit):.2f}" if profit < 0 else "$0.00"
+
+        # Build stat rows for each category
+        def stat_row(label, value, stat_key, suffix="%"):
+            if value is None:
+                return f'''<div class="stat-row">
+                        <span class="stat-label">{label}</span>
+                        <div class="stat-bar-container"><div class="stat-bar" style="width:0%;"></div></div>
+                        <span class="stat-value stat-na">--</span>
+                    </div>'''
+            color = _stat_bar_color(stat_key, value)
+            width = min(value, 100)
+            return f'''<div class="stat-row">
+                        <span class="stat-label">{label}</span>
+                        <div class="stat-bar-container"><div class="stat-bar" style="width:{width}%; background:{color};"></div></div>
+                        <span class="stat-value">{value:.1f}{suffix}</span>
+                    </div>'''
+
+        preflop_stats = (
+            stat_row("VPIP%", row["conv_vpip_pct"], "vpip")
+            + stat_row("PFR%", row["pfr_pct"], "pfr")
+            + stat_row("3-Bet%", row["three_bet_pct"], "three_bet")
+            + stat_row("Flop Seen%", row["flop_seen_pct"], "flop_seen")
+        )
+
+        bb_stats = (
+            stat_row("BB Defense%", row["bb_defend_pct"], "bb_defend")
+            + stat_row("BB Fold to Steal%", row["bb_fold_to_steal_pct"], "bb_fold")
+        )
+
+        steal_stats = stat_row("ATS%", row["ats_pct"], "ats")
+
+        profiles += f'''
+            <div class="player-profile">
+                <div class="profile-header" onclick="toggleProfile('{slug}')">
+                    <h3>{name}</h3>
+                    <span class="profile-summary">{row['games_played']} sessions &middot; {row['hands_played']} hands &middot; <span class="{profit_class}">{profit_display}</span></span>
+                </div>
+                <div class="profile-body" id="profile-body-{slug}">
+                    <div class="profile-stats-grid">
+                        <div class="stat-category">
+                            <h4>Preflop Tendencies</h4>
+                            {preflop_stats}
+                        </div>
+                        <div class="stat-category">
+                            <h4>Big Blind Play</h4>
+                            {bb_stats}
+                        </div>
+                        <div class="stat-category">
+                            <h4>Steal Game</h4>
+                            {steal_stats}
+                        </div>
+                    </div>
+                </div>
+            </div>'''
+
+    return f'''
+        <section class="player-profiles-section">
+            <h2>Player Profiles</h2>
+            <p class="profiles-hint">Click a player name to expand their profile, or click a row in the leaderboard above.</p>
+            {profiles}
+        </section>'''
 
 
 def build_html(summary: dict, charts: dict, table_data: list) -> str:
@@ -131,9 +229,10 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         avg_display = f"+{row['avg_profit']:.2f}" if row["avg_profit"] > 0 else f"{row['avg_profit']:.2f}"
 
         ats_display = f"{row['ats_pct']:.1f}%" if row['ats_pct'] is not None else "-"
+        slug = row['name'].lower().replace(' ', '-').replace("'", "")
 
         table_rows += f"""
-                <tr>
+                <tr onclick="toggleProfile('{slug}')" style="cursor:pointer;" title="Click to view {row['name']}'s profile">
                     <td>{row['name']}</td>
                     <td>{row['games_played']}</td>
                     <td>{row['hands_played']}</td>
@@ -147,6 +246,9 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
                     <td class="{avg_class}">{avg_display}</td>
                     <td>{row['showdowns']}</td>
                 </tr>"""
+
+    # Build player profiles section
+    player_profiles_section = build_player_profiles_html(table_data)
 
     # Build chart sections
     chart_sections = ""
@@ -320,6 +422,103 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         footer p {{
             margin: 4px 0;
         }}
+        .player-profiles-section {{
+            padding: 30px 20px;
+            border-top: 1px solid #0f3460;
+        }}
+        .player-profiles-section h2 {{
+            color: #e94560;
+            margin-bottom: 8px;
+            font-size: 1.5rem;
+        }}
+        .profiles-hint {{
+            color: #aaa;
+            font-size: 0.9rem;
+            margin-bottom: 16px;
+        }}
+        .player-profile {{
+            background: #16213e;
+            border: 1px solid #0f3460;
+            border-radius: 10px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }}
+        .profile-header {{
+            padding: 16px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .profile-header:hover {{
+            background: #1e2a4a;
+        }}
+        .profile-header h3 {{
+            color: #e94560;
+            font-size: 1.1rem;
+            margin: 0;
+        }}
+        .profile-summary {{
+            color: #aaa;
+            font-size: 0.85rem;
+        }}
+        .profile-body {{
+            padding: 0 20px;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease, padding 0.3s ease;
+        }}
+        .profile-body.open {{
+            padding: 20px;
+            max-height: 500px;
+            border-top: 1px solid #0f3460;
+        }}
+        .profile-stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 20px;
+        }}
+        .stat-category h4 {{
+            color: #e94560;
+            font-size: 0.95rem;
+            margin-bottom: 12px;
+            border-bottom: 1px solid #0f3460;
+            padding-bottom: 6px;
+        }}
+        .stat-row {{
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            gap: 10px;
+        }}
+        .stat-label {{
+            color: #aaa;
+            font-size: 0.85rem;
+            min-width: 130px;
+        }}
+        .stat-bar-container {{
+            flex: 1;
+            height: 8px;
+            background: #0f3460;
+            border-radius: 4px;
+            overflow: hidden;
+        }}
+        .stat-bar {{
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }}
+        .stat-value {{
+            color: #eee;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            min-width: 55px;
+            text-align: right;
+        }}
+        .stat-na {{
+            color: #666;
+            font-style: italic;
+        }}
         @media (max-width: 768px) {{
             header h1 {{
                 font-size: 1.6rem;
@@ -336,6 +535,14 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             }}
             th, td {{
                 padding: 8px 10px;
+            }}
+            .profile-header {{
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 4px;
+            }}
+            .profile-stats-grid {{
+                grid-template-columns: 1fr;
             }}
         }}
     </style>
@@ -390,6 +597,8 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             </table>
         </section>
 
+        {player_profiles_section}
+
         {chart_sections}
 
         <footer>
@@ -422,6 +631,17 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             }});
 
             rows.forEach(function(row) {{ tbody.appendChild(row); }});
+        }}
+
+        function toggleProfile(name) {{
+            var body = document.getElementById('profile-body-' + name);
+            if (body) {{
+                var wasOpen = body.classList.contains('open');
+                body.classList.toggle('open');
+                if (!wasOpen) {{
+                    body.scrollIntoView({{behavior: 'smooth', block: 'nearest'}});
+                }}
+            }}
         }}
     </script>
 </body>

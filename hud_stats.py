@@ -5,6 +5,10 @@ Calculates standard poker HUD stats:
 - VPIP% (Voluntarily Put In Pot)
 - PFR% (Pre-Flop Raise)
 - ATS% (Attempt to Steal)
+- Flop Seen % (saw the flop without folding preflop)
+- BB Defense % (BB called/raised vs a preflop raise)
+- BB Fold to Steal % (BB folded to a steal-position raise)
+- 3-Bet % (re-raised after an initial preflop open raise)
 
 These are computed from the events table by analysing preflop actions
 for each hand.
@@ -170,6 +174,15 @@ def calculate_hud_stats(db_path: str = "poker.db",
         "ats_attempts": 0,
         "net_gain_cents": 0,
         "walk_hands": 0,  # hands excluded from VPIP denominator
+        # New stats
+        "flop_seen_hands": 0,
+        "flop_eligible_hands": 0,
+        "bb_faced_raise_hands": 0,
+        "bb_defended_hands": 0,
+        "bb_steal_faced_hands": 0,
+        "bb_folded_to_steal_hands": 0,
+        "three_bet_opportunities": 0,
+        "three_bet_hands": 0,
     })
 
     # ── 5. Process each hand ────────────────────────────────────────────
@@ -246,6 +259,20 @@ def calculate_hud_stats(db_path: str = "poker.db",
             if etype != _FOLD:
                 pot_opened = True
 
+        # ── Hand-level flags for new stats ────────────────────────────────
+        has_flop = any(e["event_type"] == _COMMUNITY for e in events)
+
+        # Track who folded preflop (for flop-seen calculation)
+        preflop_folders = {e["seat"] for e in preflop_events
+                          if e["event_type"] == _FOLD}
+
+        # Find the first preflop open raiser (for BB defense + 3-bet)
+        first_raiser_seat = None
+        for e in action_events:
+            if e["event_type"] in _PFR_TYPES:
+                first_raiser_seat = e["seat"]
+                break
+
         # ── Per-player stats for this hand ──────────────────────────────
         for player_info in hand_players:
             seat = player_info["seat"]
@@ -297,6 +324,58 @@ def calculate_hud_stats(db_path: str = "poker.db",
                 if seat in steal_attempts:
                     s["ats_attempts"] += 1
 
+            # ── Flop Seen %: player didn't fold before community cards ──
+            s["flop_eligible_hands"] += 1
+            if has_flop and seat not in preflop_folders:
+                s["flop_seen_hands"] += 1
+
+            # ── BB Defense %: BB faces a raise and calls/raises ──────────
+            if seat == bb_seat and first_raiser_seat is not None and first_raiser_seat != bb_seat:
+                s["bb_faced_raise_hands"] += 1
+                # Find BB's response after the raise
+                saw_raise = False
+                for e in action_events:
+                    if e["event_type"] in _PFR_TYPES and e["seat"] == first_raiser_seat:
+                        saw_raise = True
+                    if saw_raise and e["seat"] == bb_seat:
+                        if e["event_type"] != _FOLD:
+                            s["bb_defended_hands"] += 1
+                        break
+
+            # ── BB Fold to Steal %: BB folds to a steal-position raise ───
+            if (seat == bb_seat and first_raiser_seat is not None
+                    and first_raiser_seat in steal_seats
+                    and first_raiser_seat != bb_seat):
+                s["bb_steal_faced_hands"] += 1
+                saw_steal = False
+                for e in action_events:
+                    if e["event_type"] in _PFR_TYPES and e["seat"] == first_raiser_seat:
+                        saw_steal = True
+                    if saw_steal and e["seat"] == bb_seat:
+                        if e["event_type"] == _FOLD:
+                            s["bb_folded_to_steal_hands"] += 1
+                        break
+
+            # ── 3-Bet %: re-raise after an initial open raise ────────────
+            if first_raiser_seat is not None and seat != first_raiser_seat:
+                # Player had an opportunity to 3-bet if they acted after the open
+                saw_open = False
+                counted = False
+                for e in action_events:
+                    if e["event_type"] in _PFR_TYPES and not saw_open:
+                        saw_open = True
+                        continue
+                    if saw_open and e["seat"] == seat:
+                        s["three_bet_opportunities"] += 1
+                        if e["event_type"] in _PFR_TYPES or e["event_type"] == _ET["ALL_IN"]:
+                            s["three_bet_hands"] += 1
+                        counted = True
+                        break
+                    if saw_open and e["event_type"] in _PFR_TYPES:
+                        # Someone else 3-bet before this player acted;
+                        # this player no longer has a simple 3-bet opportunity
+                        break
+
     # ── 6. Compute percentages ──────────────────────────────────────────
     result = []
     for pid, s in stats.items():
@@ -316,6 +395,23 @@ def calculate_hud_stats(db_path: str = "poker.db",
             "ats_pct": (s["ats_attempts"] / s["ats_opportunities"] * 100)
                        if s["ats_opportunities"] > 0 else None,
             "net_profit": s["net_gain_cents"] / 100.0,
+            # New stats
+            "flop_seen_hands": s["flop_seen_hands"],
+            "flop_eligible_hands": s["flop_eligible_hands"],
+            "flop_seen_pct": (s["flop_seen_hands"] / s["flop_eligible_hands"] * 100)
+                             if s["flop_eligible_hands"] > 0 else 0,
+            "bb_faced_raise_hands": s["bb_faced_raise_hands"],
+            "bb_defended_hands": s["bb_defended_hands"],
+            "bb_defend_pct": (s["bb_defended_hands"] / s["bb_faced_raise_hands"] * 100)
+                             if s["bb_faced_raise_hands"] > 0 else None,
+            "bb_steal_faced_hands": s["bb_steal_faced_hands"],
+            "bb_folded_to_steal_hands": s["bb_folded_to_steal_hands"],
+            "bb_fold_to_steal_pct": (s["bb_folded_to_steal_hands"] / s["bb_steal_faced_hands"] * 100)
+                                    if s["bb_steal_faced_hands"] > 0 else None,
+            "three_bet_opportunities": s["three_bet_opportunities"],
+            "three_bet_hands": s["three_bet_hands"],
+            "three_bet_pct": (s["three_bet_hands"] / s["three_bet_opportunities"] * 100)
+                             if s["three_bet_opportunities"] > 0 else None,
         })
 
     # Sort by net profit descending
