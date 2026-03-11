@@ -142,15 +142,9 @@ def calculate_hud_stats(db_path: str = "poker.db",
         """, hand_ids)
     else:
         cursor.execute(f"""
-            SELECT hp.hand_id, hp.player_id, hp.seat, hp.net_gain,
-                   COALESCE(cp.name, p.name) as name,
-                   COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) as cid
-            FROM hand_players hp
-            JOIN players p ON hp.player_id = p.id
-            LEFT JOIN player_mappings pm
-                ON p.id = pm.raw_player_id AND p.name = pm.nickname
-            LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
-            WHERE hp.hand_id IN ({placeholders})
+            SELECT hand_id, player_id, seat, net_gain, name, cid
+            FROM v_hand_players
+            WHERE hand_id IN ({placeholders})
         """, hand_ids)
 
     # hand_id -> list of {seat, player_id/cid, name, net_gain}

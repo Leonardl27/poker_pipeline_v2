@@ -31,23 +31,20 @@ def get_player_statistics(db_path: str = "poker.db", use_enriched: bool = True,
     having_clause = f"HAVING COUNT(DISTINCT h.game_id) >= {min_games}" if min_games > 0 else ""
 
     if use_enriched:
-        # Enriched query: use canonical names where available, aggregate by canonical identity
+        # Enriched query: use canonical names via v_hand_players view
         cursor.execute(f"""
             SELECT
-                COALESCE(cp.name, p.name) as name,
-                COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) as id,
-                COUNT(DISTINCT hp.hand_id) as hands_played,
-                SUM(hp.net_gain) / 100.0 as total_profit,
-                AVG(hp.net_gain) / 100.0 as avg_profit_per_hand,
-                SUM(CASE WHEN hp.net_gain > 0 THEN 1 ELSE 0 END) as hands_won,
-                SUM(CASE WHEN hp.showed_cards = 1 THEN 1 ELSE 0 END) as showdowns,
+                vhp.name,
+                vhp.cid as id,
+                COUNT(DISTINCT vhp.hand_id) as hands_played,
+                SUM(vhp.net_gain) / 100.0 as total_profit,
+                AVG(vhp.net_gain) / 100.0 as avg_profit_per_hand,
+                SUM(CASE WHEN vhp.net_gain > 0 THEN 1 ELSE 0 END) as hands_won,
+                SUM(CASE WHEN vhp.showed_cards = 1 THEN 1 ELSE 0 END) as showdowns,
                 COUNT(DISTINCT h.game_id) as games_played
-            FROM players p
-            JOIN hand_players hp ON p.id = hp.player_id
-            JOIN hands h ON hp.hand_id = h.id
-            LEFT JOIN player_mappings pm ON p.id = pm.raw_player_id AND p.name = pm.nickname
-            LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
-            GROUP BY COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id)
+            FROM v_hand_players vhp
+            JOIN hands h ON vhp.hand_id = h.id
+            GROUP BY vhp.cid
             {having_clause}
             ORDER BY total_profit DESC
         """)
@@ -126,15 +123,12 @@ def get_session_data(db_path: str = "poker.db", use_enriched: bool = True) -> li
             SELECT
                 h.hand_number,
                 h.started_at,
-                COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) as player_id,
-                COALESCE(cp.name, p.name) as name,
-                hp.net_gain,
-                hp.stack
+                vhp.cid as player_id,
+                vhp.name,
+                vhp.net_gain,
+                vhp.stack
             FROM hands h
-            JOIN hand_players hp ON h.id = hp.hand_id
-            JOIN players p ON hp.player_id = p.id
-            LEFT JOIN player_mappings pm ON p.id = pm.raw_player_id AND p.name = pm.nickname
-            LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
+            JOIN v_hand_players vhp ON h.id = vhp.hand_id
             ORDER BY h.started_at, player_id
         """)
     else:
@@ -195,21 +189,17 @@ def get_per_session_stats(db_path: str = "poker.db", use_enriched: bool = True,
                    sub.session_start, sub.session_profit
             FROM (
                 SELECT
-                    COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) AS player_id,
-                    COALESCE(cp.name, p.name)                            AS name,
+                    vhp.cid                    AS player_id,
+                    vhp.name,
                     h.game_id,
-                    MIN(h.started_at)                                    AS session_start,
-                    SUM(hp.net_gain) / 100.0                              AS session_profit,
+                    MIN(h.started_at)          AS session_start,
+                    SUM(vhp.net_gain) / 100.0  AS session_profit,
                     COUNT(h.game_id) OVER (
-                        PARTITION BY COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id)
+                        PARTITION BY vhp.cid
                     ) AS games_played
-                FROM players p
-                JOIN hand_players hp ON p.id = hp.player_id
-                JOIN hands h         ON hp.hand_id = h.id
-                LEFT JOIN player_mappings pm
-                    ON p.id = pm.raw_player_id AND p.name = pm.nickname
-                LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
-                GROUP BY COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id), h.game_id
+                FROM v_hand_players vhp
+                JOIN hands h ON vhp.hand_id = h.id
+                GROUP BY vhp.cid, h.game_id
             ) sub
             WHERE sub.games_played >= ?
             ORDER BY sub.player_id, sub.session_start, sub.game_id
