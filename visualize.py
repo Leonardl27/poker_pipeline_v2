@@ -395,27 +395,47 @@ def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = No
         print("No session data available")
         return
 
-    # Group by player, preserving chronological order
-    player_sessions: dict = defaultdict(list)
+    # Build global session list ordered by date
+    session_dates: dict = {}  # game_id -> session_start
+    player_session_map: dict = defaultdict(dict)  # player_id -> {game_id: profit}
     player_names: dict = {}
     for row in rows:
-        player_sessions[row['player_id']].append(row['session_profit'] or 0)
-        player_names[row['player_id']] = row['name']
+        gid = row['game_id']
+        pid = row['player_id']
+        player_names[pid] = row['name']
+        player_session_map[pid][gid] = row['session_profit'] or 0
+        if gid not in session_dates:
+            session_dates[gid] = row['session_start']
+
+    # Global sessions sorted chronologically
+    global_sessions = sorted(session_dates.keys(), key=lambda g: session_dates[g])
+    session_index = {gid: i for i, gid in enumerate(global_sessions)}
 
     # Sort players by total profit descending
     sorted_players = sorted(
-        player_sessions.items(),
-        key=lambda kv: sum(kv[1]),
+        player_session_map.items(),
+        key=lambda kv: sum(kv[1].values()),
         reverse=True,
     )
 
     n_players = len(sorted_players)
-    max_sessions = max(len(profits) for _, profits in sorted_players)
+    max_sessions = len(global_sessions)
 
     # --- Pick top 3 winners + bottom 2 losers for cumulative chart ---
     top3 = sorted_players[:3]
     bottom2 = sorted_players[-2:] if n_players > 3 else []
-    featured = top3 + [p for p in bottom2 if p not in top3]
+    featured = top3 + [p for p in bottom2 if p[0] not in set(pid for pid, _ in top3)]
+
+    # Build date labels for x-axis (started_at is epoch ms)
+    from datetime import datetime as _dt
+    session_labels = []
+    for gid in global_sessions:
+        ts = session_dates[gid]
+        try:
+            dt = _dt.fromtimestamp(ts / 1000)
+            session_labels.append(dt.strftime('%m/%d'))
+        except (ValueError, TypeError, OSError):
+            session_labels.append(str(len(session_labels) + 1))
 
     # ---- Figure layout ---------------------------------------------------
     fig, (ax1, ax2) = plt.subplots(
@@ -429,14 +449,16 @@ def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = No
     # ── Top subplot: cumulative P/L for featured players ──────────────────
     ax1.set_facecolor(PANEL_BG)
 
-    for i, (player_id, profits) in enumerate(featured):
+    for i, (player_id, profit_map) in enumerate(featured):
         cumulative = []
         running = 0
-        for p in profits:
-            running += p
-            cumulative.append(running)
+        x_vals = []
+        for col_idx, gid in enumerate(global_sessions):
+            if gid in profit_map:
+                running += profit_map[gid]
+                cumulative.append(running)
+                x_vals.append(col_idx + 1)
 
-        x_vals = list(range(1, len(cumulative) + 1))
         color = TOP_COLORS[i % len(TOP_COLORS)]
         name = player_names[player_id]
 
@@ -456,11 +478,12 @@ def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = No
         )
 
     ax1.axhline(y=0, color=BORDER, linestyle='--', linewidth=1, alpha=0.7)
-    ax1.set_xlabel('Session Number', color=TEXT, fontsize=11)
+    ax1.set_xlabel('Session Date', color=TEXT, fontsize=11)
     ax1.set_ylabel('Cumulative Profit / Loss ($)', color=TEXT, fontsize=11)
     ax1.set_title('Cumulative P/L — Top 3 Winners & Bottom 2 Losers',
                   color=TEXT, fontsize=12, pad=8)
     ax1.set_xticks(range(1, max_sessions + 1))
+    ax1.set_xticklabels(session_labels, rotation=45, ha='right')
     ax1.tick_params(colors=NEUTRAL)
     for spine in ax1.spines.values():
         spine.set_edgecolor(BORDER)
@@ -469,12 +492,12 @@ def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = No
     # ── Bottom subplot: player x session heatmap ──────────────────────────
     ax2.set_facecolor(PANEL_BG)
 
-    # Build the data matrix (players sorted by total profit)
+    # Build the data matrix aligned to global sessions
     names_ordered = [player_names[pid] for pid, _ in sorted_players]
     data_matrix = np.full((n_players, max_sessions), np.nan)
-    for row_idx, (player_id, profits) in enumerate(sorted_players):
-        for col_idx, val in enumerate(profits):
-            data_matrix[row_idx, col_idx] = val
+    for row_idx, (player_id, profit_map) in enumerate(sorted_players):
+        for gid, val in profit_map.items():
+            data_matrix[row_idx, session_index[gid]] = val
 
     # Diverging colormap centered at 0
     vmax = np.nanmax(np.abs(data_matrix)) if not np.all(np.isnan(data_matrix)) else 10
@@ -503,10 +526,10 @@ def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = No
                      color=txt_color, fontsize=fontsize, fontweight='bold')
 
     ax2.set_xticks(range(max_sessions))
-    ax2.set_xticklabels(range(1, max_sessions + 1))
+    ax2.set_xticklabels(session_labels, rotation=45, ha='right')
     ax2.set_yticks(range(n_players))
     ax2.set_yticklabels(names_ordered)
-    ax2.set_xlabel('Session Number', color=TEXT, fontsize=11)
+    ax2.set_xlabel('Session Date', color=TEXT, fontsize=11)
     ax2.set_title('Session Profit/Loss by Player',
                   color=TEXT, fontsize=12, pad=8)
     ax2.tick_params(colors=NEUTRAL, labelsize=9)
