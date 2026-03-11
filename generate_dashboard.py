@@ -73,7 +73,8 @@ def generate_chart_base64(db_path: str, output_dir: str) -> dict:
 
     charts = {}
     for chart_name in ["player_statistics.png", "hand_analysis.png", "session_trends.png",
-                       "momentum.png", "pipeline_diagram.png"]:
+                       "momentum.png", "stat_correlations.png", "profit_drivers.png",
+                       "pipeline_diagram.png"]:
         chart_path = Path(output_dir) / chart_name
         if chart_path.exists():
             with open(chart_path, "rb") as f:
@@ -122,6 +123,17 @@ def get_table_data(db_path: str) -> list:
                                      if h.get("bb_fold_to_steal_pct") is not None else None),
             "three_bet_pct": (round(h["three_bet_pct"], 1)
                               if h.get("three_bet_pct") is not None else None),
+            # Post-flop & showdown stats
+            "wtsd_pct": (round(h["wtsd_pct"], 1)
+                         if h.get("wtsd_pct") is not None else None),
+            "wsd_pct": (round(h["wsd_pct"], 1)
+                        if h.get("wsd_pct") is not None else None),
+            "aggression_factor": (round(h["aggression_factor"], 1)
+                                  if h.get("aggression_factor") is not None else None),
+            "cbet_pct": (round(h["cbet_pct"], 1)
+                         if h.get("cbet_pct") is not None else None),
+            "fold_to_cbet_pct": (round(h["fold_to_cbet_pct"], 1)
+                                 if h.get("fold_to_cbet_pct") is not None else None),
         })
     return rows
 
@@ -136,6 +148,10 @@ def _stat_bar_color(stat_name: str, value: float) -> str:
         "bb_defend":[(40, "#e94560"), (60, "#4caf50"), (100, "#5b9bd5")],
         "bb_fold":  [(30, "#4caf50"), (50, "#e9a945"), (100, "#e94560")],
         "ats":      [(25, "#5b9bd5"), (40, "#4caf50"), (100, "#e94560")],
+        "wtsd":     [(20, "#5b9bd5"), (35, "#4caf50"), (100, "#e94560")],
+        "wsd":      [(45, "#e94560"), (55, "#4caf50"), (100, "#5b9bd5")],
+        "cbet":     [(50, "#5b9bd5"), (70, "#4caf50"), (100, "#e94560")],
+        "fold_cbet":[(40, "#4caf50"), (55, "#e9a945"), (100, "#e94560")],
     }
     thresholds = ranges.get(stat_name, [(100, "#4caf50")])
     for limit, color in thresholds:
@@ -184,6 +200,33 @@ def build_player_profiles_html(table_data: list) -> str:
 
         steal_stats = stat_row("ATS%", row["ats_pct"], "ats")
 
+        # AF is a ratio (not percentage) — needs special rendering
+        def ratio_row(label, value, max_scale=5.0):
+            if value is None:
+                return f'''<div class="stat-row">
+                        <span class="stat-label">{label}</span>
+                        <div class="stat-bar-container"><div class="stat-bar" style="width:0%;"></div></div>
+                        <span class="stat-value stat-na">--</span>
+                    </div>'''
+            width = min(value / max_scale * 100, 100)
+            color = "#5b9bd5" if value < 1.5 else "#4caf50" if value < 3.5 else "#e94560"
+            return f'''<div class="stat-row">
+                        <span class="stat-label">{label}</span>
+                        <div class="stat-bar-container"><div class="stat-bar" style="width:{width}%; background:{color};"></div></div>
+                        <span class="stat-value">{value:.1f}</span>
+                    </div>'''
+
+        postflop_stats = (
+            stat_row("C-Bet%", row["cbet_pct"], "cbet")
+            + stat_row("Fold to C-Bet%", row["fold_to_cbet_pct"], "fold_cbet")
+            + ratio_row("Aggression Factor", row["aggression_factor"])
+        )
+
+        showdown_stats = (
+            stat_row("WTSD%", row["wtsd_pct"], "wtsd")
+            + stat_row("W$SD%", row["wsd_pct"], "wsd")
+        )
+
         profiles += f'''
             <div class="player-profile">
                 <div class="profile-header" onclick="toggleProfile('{slug}')">
@@ -203,6 +246,14 @@ def build_player_profiles_html(table_data: list) -> str:
                         <div class="stat-category">
                             <h4>Steal Game</h4>
                             {steal_stats}
+                        </div>
+                        <div class="stat-category">
+                            <h4>Postflop Play</h4>
+                            {postflop_stats}
+                        </div>
+                        <div class="stat-category">
+                            <h4>Showdown</h4>
+                            {showdown_stats}
                         </div>
                     </div>
                 </div>
@@ -263,6 +314,12 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         ("momentum.png", "Player Momentum",
          "Individual per-session profit/loss for each player. Green bars = winning sessions, "
          "red bars = losing sessions. \u2191/\u2193 arrows indicate recent trend direction."),
+        ("stat_correlations.png", "Stat Correlations",
+         "Pearson correlation matrix between all HUD stats and total profit. "
+         "Green indicates positive correlation, red indicates negative."),
+        ("profit_drivers.png", "Profit Drivers",
+         "Regression analysis showing which HUD stats most strongly predict profit. "
+         "Each panel shows scatter plot with best-fit line, R\u00b2, and p-value."),
         ("pipeline_diagram.png", "Pipeline Architecture",
          "How data flows from raw JSON replay files through the processing pipeline to this dashboard."),
     ]

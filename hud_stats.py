@@ -40,6 +40,9 @@ _COMMUNITY = _ET["COMMUNITY_CARDS"]
 _FOLD = _ET["FOLD"]
 _SB_TYPE = _ET["SMALL_BLIND"]
 _BB_TYPE = _ET["BIG_BLIND"]
+_BET_TYPE = _ET["BET"]
+_ALL_IN_TYPE = _ET["ALL_IN"]
+_RAISE_TYPE = _ET["RAISE"]  # call/limp in PokerNow encoding
 
 
 def _seats_clockwise(active_seats: list[int], dealer_seat: int) -> list[int]:
@@ -177,6 +180,18 @@ def calculate_hud_stats(db_path: str = "poker.db",
         "bb_folded_to_steal_hands": 0,
         "three_bet_opportunities": 0,
         "three_bet_hands": 0,
+        # WTSD / W$SD
+        "showdown_hands": 0,
+        "showdown_won_hands": 0,
+        # Aggression Factor (post-flop)
+        "postflop_bets_raises": 0,
+        "postflop_calls": 0,
+        # C-Bet
+        "cbet_opportunities": 0,
+        "cbet_made": 0,
+        # Fold to C-Bet
+        "faced_cbet": 0,
+        "folded_to_cbet": 0,
     })
 
     # ── 5. Process each hand ────────────────────────────────────────────
@@ -266,6 +281,37 @@ def calculate_hud_stats(db_path: str = "poker.db",
             if e["event_type"] in _PFR_TYPES:
                 first_raiser_seat = e["seat"]
                 break
+
+        # ── Street segmentation (for post-flop stats) ─────────────────────
+        streets = {"flop": [], "turn": [], "river": []}
+        street_names = ["flop", "turn", "river"]
+        street_idx = -1  # -1 = preflop (already handled separately)
+        for e in events:
+            if e["event_type"] == _COMMUNITY:
+                street_idx += 1
+                continue
+            if 0 <= street_idx < len(street_names):
+                streets[street_names[street_idx]].append(e)
+        flop_events = streets["flop"]
+
+        # Find last preflop aggressor (for C-Bet tracking)
+        last_pf_raiser_seat = None
+        for e in action_events:
+            if e["event_type"] in (_BET_TYPE, _ALL_IN_TYPE):
+                last_pf_raiser_seat = e["seat"]
+
+        # Detect hand-level showdown: hand reached flop AND 2+ players never folded
+        all_folders = {e["seat"] for e in events if e["event_type"] == _FOLD}
+        non_fold_count = len(set(active_seats) - all_folders)
+        hand_went_to_showdown = has_flop and non_fold_count >= 2
+
+        # Did the preflop raiser c-bet? (computed once for all players)
+        pf_raiser_cbet = False
+        if last_pf_raiser_seat is not None and has_flop:
+            for e in flop_events:
+                if e["seat"] == last_pf_raiser_seat and e["event_type"] in (_BET_TYPE, _ALL_IN_TYPE):
+                    pf_raiser_cbet = True
+                    break
 
         # ── Per-player stats for this hand ──────────────────────────────
         for player_info in hand_players:
@@ -370,6 +416,42 @@ def calculate_hud_stats(db_path: str = "poker.db",
                         # this player no longer has a simple 3-bet opportunity
                         break
 
+            # ── WTSD%: went to showdown when seeing the flop ───────────
+            if has_flop and seat not in preflop_folders:
+                if hand_went_to_showdown and seat not in all_folders:
+                    s["showdown_hands"] += 1
+                    # W$SD: won money at showdown
+                    if (player_info["net_gain"] or 0) > 0:
+                        s["showdown_won_hands"] += 1
+
+            # ── Aggression Factor: post-flop (bet+raise) / calls ──────
+            for street_name in ("flop", "turn", "river"):
+                for e in streets[street_name]:
+                    if e["seat"] != seat:
+                        continue
+                    if e["event_type"] in (_BET_TYPE, _ALL_IN_TYPE):
+                        s["postflop_bets_raises"] += 1
+                    elif e["event_type"] == _RAISE_TYPE:  # RAISE(7) = call
+                        s["postflop_calls"] += 1
+
+            # ── C-Bet%: preflop raiser bets the flop ──────────────────
+            if last_pf_raiser_seat == seat and has_flop and seat not in preflop_folders:
+                s["cbet_opportunities"] += 1
+                if pf_raiser_cbet:
+                    s["cbet_made"] += 1
+
+            # ── Fold to C-Bet%: non-raiser folds on flop vs c-bet ─────
+            if (last_pf_raiser_seat is not None
+                    and last_pf_raiser_seat != seat
+                    and has_flop
+                    and seat not in preflop_folders
+                    and pf_raiser_cbet):
+                s["faced_cbet"] += 1
+                for e in flop_events:
+                    if e["seat"] == seat and e["event_type"] == _FOLD:
+                        s["folded_to_cbet"] += 1
+                        break
+
     # ── 6. Compute percentages ──────────────────────────────────────────
     result = []
     for pid, s in stats.items():
@@ -406,6 +488,28 @@ def calculate_hud_stats(db_path: str = "poker.db",
             "three_bet_hands": s["three_bet_hands"],
             "three_bet_pct": (s["three_bet_hands"] / s["three_bet_opportunities"] * 100)
                              if s["three_bet_opportunities"] > 0 else None,
+            # WTSD / W$SD
+            "showdown_hands": s["showdown_hands"],
+            "showdown_won_hands": s["showdown_won_hands"],
+            "wtsd_pct": (s["showdown_hands"] / s["flop_seen_hands"] * 100)
+                        if s["flop_seen_hands"] > 0 else None,
+            "wsd_pct": (s["showdown_won_hands"] / s["showdown_hands"] * 100)
+                       if s["showdown_hands"] > 0 else None,
+            # Aggression Factor
+            "postflop_bets_raises": s["postflop_bets_raises"],
+            "postflop_calls": s["postflop_calls"],
+            "aggression_factor": (s["postflop_bets_raises"] / s["postflop_calls"])
+                                 if s["postflop_calls"] > 0 else None,
+            # C-Bet
+            "cbet_opportunities": s["cbet_opportunities"],
+            "cbet_made": s["cbet_made"],
+            "cbet_pct": (s["cbet_made"] / s["cbet_opportunities"] * 100)
+                        if s["cbet_opportunities"] > 0 else None,
+            # Fold to C-Bet
+            "faced_cbet": s["faced_cbet"],
+            "folded_to_cbet": s["folded_to_cbet"],
+            "fold_to_cbet_pct": (s["folded_to_cbet"] / s["faced_cbet"] * 100)
+                                if s["faced_cbet"] > 0 else None,
         })
 
     # Sort by net profit descending

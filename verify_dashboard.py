@@ -30,6 +30,8 @@ EXPECTED_CHARTS = [
     "hand_analysis.png",
     "session_trends.png",
     "momentum.png",
+    "stat_correlations.png",
+    "profit_drivers.png",
     "pipeline_diagram.png",
 ]
 
@@ -90,10 +92,16 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
                 errors.append(f"{name}: {field}={val} out of range [0, 100]")
 
         # Nullable percentage checks
-        for field in ["ats_pct", "bb_defend_pct", "bb_fold_to_steal_pct", "three_bet_pct"]:
+        for field in ["ats_pct", "bb_defend_pct", "bb_fold_to_steal_pct", "three_bet_pct",
+                      "wtsd_pct", "wsd_pct", "cbet_pct", "fold_to_cbet_pct"]:
             val = row.get(field)
             if val is not None and (val < 0 or val > 100):
                 errors.append(f"{name}: {field}={val} out of range [0, 100]")
+
+        # Aggression Factor is a ratio (not percentage) — reasonable range [0, 20]
+        af = row.get("aggression_factor")
+        if af is not None and (af < 0 or af > 20):
+            errors.append(f"{name}: aggression_factor={af} out of range [0, 20]")
 
         # Logical constraint: conventional VPIP should be >= PFR
         if row["conv_vpip_pct"] + 0.1 < row["pfr_pct"]:

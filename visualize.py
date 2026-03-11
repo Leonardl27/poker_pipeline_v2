@@ -650,6 +650,251 @@ def plot_momentum(db_path: str = "poker.db", save_path: Optional[str] = None,
     plt.close(fig)
 
 
+def plot_stat_correlations(db_path: str = "poker.db", save_path: Optional[str] = None,
+                           min_games: int = 3):
+    """Correlation heatmap between HUD stats and total profit."""
+    import numpy as np
+    from hud_stats import calculate_hud_stats
+    from matplotlib.colors import TwoSlopeNorm, LinearSegmentedColormap
+
+    BG = '#1a1a2e'
+    PANEL_BG = '#16213e'
+    BORDER = '#0f3460'
+    ACCENT = '#e94560'
+    TEXT = '#eeeeee'
+    NEUTRAL = '#aaaaaa'
+
+    hud = calculate_hud_stats(db_path)
+
+    # Filter to players with enough games
+    stats_data = get_player_statistics(db_path, use_enriched=True, min_games=min_games)
+    eligible_names = {r["name"] for r in stats_data}
+    hud = [h for h in hud if h["name"] in eligible_names]
+
+    if len(hud) < 3:
+        # Create a placeholder chart
+        fig, ax = plt.subplots(figsize=(12, 10))
+        fig.patch.set_facecolor(BG)
+        ax.set_facecolor(PANEL_BG)
+        ax.text(0.5, 0.5, 'Not enough players for correlation analysis',
+                transform=ax.transAxes, ha='center', va='center', color=TEXT, fontsize=14)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        if save_path:
+            plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+            print(f"Saved: {save_path}")
+        plt.close(fig)
+        return
+
+    # Define stat columns to correlate
+    stat_keys = [
+        ("conv_vpip_pct", "VPIP%"),
+        ("pfr_pct", "PFR%"),
+        ("ats_pct", "ATS%"),
+        ("three_bet_pct", "3-Bet%"),
+        ("flop_seen_pct", "Flop Seen%"),
+        ("bb_defend_pct", "BB Def%"),
+        ("wtsd_pct", "WTSD%"),
+        ("wsd_pct", "W$SD%"),
+        ("aggression_factor", "AF"),
+        ("cbet_pct", "C-Bet%"),
+        ("fold_to_cbet_pct", "Fold C-Bet%"),
+        ("net_profit", "Profit"),
+    ]
+
+    # Build data matrix, using NaN for None values
+    n_stats = len(stat_keys)
+    n_players = len(hud)
+    matrix = np.full((n_players, n_stats), np.nan)
+    for i, h in enumerate(hud):
+        for j, (key, _) in enumerate(stat_keys):
+            val = h.get(key)
+            if val is not None:
+                matrix[i, j] = val
+
+    # Compute pairwise Pearson correlation, ignoring NaN pairs
+    corr_matrix = np.full((n_stats, n_stats), np.nan)
+    for i in range(n_stats):
+        for j in range(n_stats):
+            mask = ~np.isnan(matrix[:, i]) & ~np.isnan(matrix[:, j])
+            if mask.sum() >= 3:
+                corr_matrix[i, j] = np.corrcoef(matrix[mask, i], matrix[mask, j])[0, 1]
+
+    # Plot heatmap
+    fig, ax = plt.subplots(figsize=(12, 10))
+    fig.patch.set_facecolor(BG)
+    ax.set_facecolor(PANEL_BG)
+
+    cmap = LinearSegmentedColormap.from_list('poker_corr', [ACCENT, PANEL_BG, '#4caf50'], N=256)
+    norm = TwoSlopeNorm(vmin=-1, vcenter=0, vmax=1)
+
+    labels = [label for _, label in stat_keys]
+    im = ax.imshow(corr_matrix, cmap=cmap, norm=norm, aspect='auto')
+
+    # Annotate cells
+    for i in range(n_stats):
+        for j in range(n_stats):
+            val = corr_matrix[i, j]
+            if not np.isnan(val):
+                txt_color = TEXT if abs(val) > 0.3 else NEUTRAL
+                ax.text(j, i, f'{val:.2f}', ha='center', va='center',
+                        color=txt_color, fontsize=8, fontweight='bold')
+
+    ax.set_xticks(range(n_stats))
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+    ax.set_yticks(range(n_stats))
+    ax.set_yticklabels(labels)
+    ax.tick_params(colors=NEUTRAL, labelsize=9)
+    ax.set_title('HUD Stat Correlation Matrix', color=ACCENT, fontsize=14, fontweight='bold', pad=12)
+
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+    cbar.set_label('Pearson Correlation', color=TEXT, fontsize=10)
+    cbar.ax.tick_params(colors=NEUTRAL)
+
+    for spine in ax.spines.values():
+        spine.set_edgecolor(BORDER)
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+        print(f"Saved: {save_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_profit_drivers(db_path: str = "poker.db", save_path: Optional[str] = None,
+                        min_games: int = 3):
+    """Multi-panel scatter + regression for top stat-vs-profit correlations."""
+    import numpy as np
+    from scipy import stats as sp_stats
+    from hud_stats import calculate_hud_stats
+
+    BG = '#1a1a2e'
+    PANEL_BG = '#16213e'
+    BORDER = '#0f3460'
+    ACCENT = '#e94560'
+    TEXT = '#eeeeee'
+    NEUTRAL = '#aaaaaa'
+    SCATTER_COLORS = ['#2a9d8f', '#38bdf8', '#fb923c', '#e9c46a']
+
+    hud = calculate_hud_stats(db_path)
+    stats_data = get_player_statistics(db_path, use_enriched=True, min_games=min_games)
+    eligible_names = {r["name"] for r in stats_data}
+    hud = [h for h in hud if h["name"] in eligible_names]
+
+    if len(hud) < 4:
+        # Create a placeholder chart
+        fig, ax = plt.subplots(figsize=(20, 5))
+        fig.patch.set_facecolor(BG)
+        ax.set_facecolor(PANEL_BG)
+        ax.text(0.5, 0.5, 'Not enough players for regression analysis',
+                transform=ax.transAxes, ha='center', va='center', color=TEXT, fontsize=14)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        if save_path:
+            plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+            print(f"Saved: {save_path}")
+        plt.close(fig)
+        return
+
+    stat_keys = [
+        ("conv_vpip_pct", "VPIP%"),
+        ("pfr_pct", "PFR%"),
+        ("ats_pct", "ATS%"),
+        ("three_bet_pct", "3-Bet%"),
+        ("flop_seen_pct", "Flop Seen%"),
+        ("bb_defend_pct", "BB Def%"),
+        ("wtsd_pct", "WTSD%"),
+        ("wsd_pct", "W$SD%"),
+        ("aggression_factor", "AF"),
+        ("cbet_pct", "C-Bet%"),
+        ("fold_to_cbet_pct", "Fold C-Bet%"),
+    ]
+
+    # For each stat, compute correlation with net_profit
+    correlations = []
+    for key, label in stat_keys:
+        vals = []
+        profs = []
+        for h in hud:
+            v = h.get(key)
+            if v is not None:
+                vals.append(v)
+                profs.append(h["net_profit"])
+        if len(vals) >= 4:
+            r = np.corrcoef(vals, profs)[0, 1]
+            correlations.append((abs(r), key, label, np.array(vals), np.array(profs)))
+
+    # Sort by absolute correlation, take top 4
+    correlations.sort(reverse=True)
+    top_stats = correlations[:4]
+
+    if len(top_stats) < 2:
+        fig, ax = plt.subplots(figsize=(20, 5))
+        fig.patch.set_facecolor(BG)
+        ax.set_facecolor(PANEL_BG)
+        ax.text(0.5, 0.5, 'Not enough valid stat correlations',
+                transform=ax.transAxes, ha='center', va='center', color=TEXT, fontsize=14)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        if save_path:
+            plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+            print(f"Saved: {save_path}")
+        plt.close(fig)
+        return
+
+    n_panels = len(top_stats)
+    fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 5))
+    fig.patch.set_facecolor(BG)
+    fig.suptitle('Profit Drivers \u2014 Top Correlated HUD Stats',
+                 color=ACCENT, fontsize=14, fontweight='bold', y=1.02)
+
+    if n_panels == 1:
+        axes = [axes]
+
+    for idx, (abs_r, key, label, x_vals, y_vals) in enumerate(top_stats):
+        ax = axes[idx]
+        ax.set_facecolor(PANEL_BG)
+
+        # Scatter
+        color = SCATTER_COLORS[idx % len(SCATTER_COLORS)]
+        ax.scatter(x_vals, y_vals, color=color, alpha=0.8, s=60,
+                   edgecolors=BORDER, linewidths=0.5)
+
+        # Regression line
+        slope, intercept, r_value, p_value, std_err = sp_stats.linregress(x_vals, y_vals)
+        x_line = np.linspace(x_vals.min(), x_vals.max(), 50)
+        y_line = slope * x_line + intercept
+        ax.plot(x_line, y_line, color=ACCENT, linewidth=2, linestyle='--', alpha=0.8)
+
+        # R² and p-value annotation
+        r_sq = r_value ** 2
+        p_str = f'p={p_value:.3f}' if p_value >= 0.001 else 'p<0.001'
+        ax.text(0.05, 0.95, f'R\u00b2={r_sq:.3f}\n{p_str}',
+                transform=ax.transAxes, color=TEXT, fontsize=9, fontweight='bold',
+                va='top', ha='left',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor=PANEL_BG,
+                          edgecolor=BORDER, alpha=0.9))
+
+        ax.set_xlabel(label, color=TEXT, fontsize=10)
+        ax.set_ylabel('Profit ($)', color=TEXT, fontsize=10)
+        ax.set_title(f'{label} vs Profit', color=TEXT, fontsize=11, pad=6)
+        ax.tick_params(colors=NEUTRAL, labelsize=8)
+        ax.axhline(y=0, color=BORDER, linestyle='-', linewidth=0.5, alpha=0.5)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(BORDER)
+        ax.grid(True, alpha=0.1, color=NEUTRAL)
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+        print(f"Saved: {save_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
 def plot_pipeline_diagram(save_path: Optional[str] = None):
     """Create a visual diagram of the data pipeline architecture."""
     fig, ax = plt.subplots(figsize=(14, 7))
@@ -759,6 +1004,8 @@ def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = "."
     plot_hand_analysis(db_path, str(output / "hand_analysis.png"))
     plot_session_trends(db_path, str(output / "session_trends.png"), min_games=min_games)
     plot_momentum(db_path, str(output / "momentum.png"), min_games=min_games)
+    plot_stat_correlations(db_path, str(output / "stat_correlations.png"), min_games=min_games)
+    plot_profit_drivers(db_path, str(output / "profit_drivers.png"), min_games=min_games)
     plot_pipeline_diagram(str(output / "pipeline_diagram.png"))
 
     print("\nAll visualizations generated!")
