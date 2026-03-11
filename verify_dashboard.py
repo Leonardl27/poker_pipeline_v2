@@ -118,7 +118,7 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
         return errors, warnings
 
     # Check for key sections
-    for section_name in ["Player Leaderboard", "Player Profiles"]:
+    for section_name in ["Player Leaderboard", "Player Profiles", "Scouting Report"]:
         if section_name not in html:
             errors.append(f"Missing '{section_name}' section in HTML")
 
@@ -130,6 +130,22 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
     html_no_base64 = re.sub(r'data:image/png;base64,[A-Za-z0-9+/=]+', '', html)
     if "NaN" in html_no_base64:
         errors.append("Found 'NaN' in HTML output")
+
+    # Check scouting reports: one per player, each with 2-4 bullets
+    scouting_count = html_no_base64.count('class="scouting-report"')
+    if scouting_count != len(table_data):
+        errors.append(
+            f"Expected {len(table_data)} scouting reports, found {scouting_count}"
+        )
+    bullet_lists = re.findall(
+        r'<ul class="scouting-bullets">(.*?)</ul>', html_no_base64, re.DOTALL
+    )
+    for i, bl in enumerate(bullet_lists):
+        bullet_count = bl.count("<li>")
+        if bullet_count < 2 or bullet_count > 4:
+            warnings.append(
+                f"Scouting report #{i+1} has {bullet_count} bullets (expected 2-4)"
+            )
 
     # Write the HTML
     output_path = Path(output_dir) / "index.html"

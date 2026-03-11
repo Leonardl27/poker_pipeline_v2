@@ -19,6 +19,7 @@ from ingest import ingest_directory
 from mappings import load_mappings
 from visualize import get_player_statistics, generate_all_visualizations
 from hud_stats import calculate_hud_stats
+from scouting import generate_scouting_report
 
 DB_PATH = "poker.db"
 RAW_DIR = "raw"
@@ -227,6 +228,11 @@ def build_player_profiles_html(table_data: list) -> str:
             + stat_row("W$SD%", row["wsd_pct"], "wsd")
         )
 
+        scouting_bullets = generate_scouting_report(row)
+        scouting_li = "\n                            ".join(
+            f"<li>{b}</li>" for b in scouting_bullets
+        )
+
         profiles += f'''
             <div class="player-profile">
                 <div class="profile-header" onclick="toggleProfile('{slug}')">
@@ -255,6 +261,12 @@ def build_player_profiles_html(table_data: list) -> str:
                             <h4>Showdown</h4>
                             {showdown_stats}
                         </div>
+                    </div>
+                    <div class="scouting-report">
+                        <h4>Scouting Report</h4>
+                        <ul class="scouting-bullets">
+                            {scouting_li}
+                        </ul>
                     </div>
                 </div>
             </div>'''
@@ -527,7 +539,7 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         }}
         .profile-body.open {{
             padding: 20px;
-            max-height: 500px;
+            max-height: 800px;
             border-top: 1px solid #0f3460;
         }}
         .profile-stats-grid {{
@@ -576,6 +588,44 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             color: #666;
             font-style: italic;
         }}
+        .scouting-report {{
+            margin-top: 20px;
+            padding: 16px 20px;
+            background: #1a1a2e;
+            border-left: 3px solid #e94560;
+            border-radius: 0 8px 8px 0;
+        }}
+        .scouting-report h4 {{
+            color: #e94560;
+            font-size: 0.95rem;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #0f3460;
+            padding-bottom: 6px;
+        }}
+        .scouting-bullets {{
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }}
+        .scouting-bullets li {{
+            color: #eee;
+            font-size: 0.88rem;
+            line-height: 1.5;
+            padding: 6px 0 6px 20px;
+            position: relative;
+            border-bottom: 1px solid rgba(15, 52, 96, 0.5);
+        }}
+        .scouting-bullets li:last-child {{
+            border-bottom: none;
+        }}
+        .scouting-bullets li::before {{
+            content: "\\25B6";
+            color: #e94560;
+            position: absolute;
+            left: 0;
+            font-size: 0.7rem;
+            top: 8px;
+        }}
         @media (max-width: 768px) {{
             header h1 {{
                 font-size: 1.6rem;
@@ -600,6 +650,13 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             }}
             .profile-stats-grid {{
                 grid-template-columns: 1fr;
+            }}
+            .scouting-report {{
+                margin-top: 16px;
+                padding: 12px 16px;
+            }}
+            .scouting-bullets li {{
+                font-size: 0.82rem;
             }}
         }}
     </style>
