@@ -33,6 +33,7 @@ EXPECTED_CHARTS = [
     "stat_correlations.png",
     "profit_drivers.png",
     "pipeline_diagram.png",
+    "cicd_diagram.png",
 ]
 
 

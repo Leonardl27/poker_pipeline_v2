@@ -75,7 +75,7 @@ def generate_chart_base64(db_path: str, output_dir: str) -> dict:
     charts = {}
     for chart_name in ["player_statistics.png", "hand_analysis.png", "session_trends.png",
                        "momentum.png", "stat_correlations.png", "profit_drivers.png",
-                       "pipeline_diagram.png"]:
+                       "pipeline_diagram.png", "cicd_diagram.png"]:
         chart_path = Path(output_dir) / chart_name
         if chart_path.exists():
             with open(chart_path, "rb") as f:
@@ -332,8 +332,6 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         ("profit_drivers.png", "Profit Drivers",
          "Regression analysis showing which HUD stats most strongly predict profit. "
          "Each panel shows scatter plot with best-fit line, R\u00b2, and p-value."),
-        ("pipeline_diagram.png", "Pipeline Architecture",
-         "How data flows from raw JSON replay files through the processing pipeline to this dashboard."),
     ]
     for filename, title, description in chart_configs:
         if filename in charts:
@@ -342,6 +340,18 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             <h2>{title}</h2>
             <p class="chart-description">{description}</p>
             <img src="data:image/png;base64,{charts[filename]}" alt="{title}" />
+        </section>"""
+
+    # Side-by-side architecture diagrams
+    if "pipeline_diagram.png" in charts and "cicd_diagram.png" in charts:
+        chart_sections += f"""
+        <section class="chart-section">
+            <h2>Architecture &amp; CI/CD</h2>
+            <p class="chart-description">Left: how data flows from raw JSON files through the pipeline to this dashboard. Right: the CI/CD workflow that validates and deploys every change.</p>
+            <div class="diagram-pair">
+                <img src="data:image/png;base64,{charts['pipeline_diagram.png']}" alt="Pipeline Architecture" />
+                <img src="data:image/png;base64,{charts['cicd_diagram.png']}" alt="CI/CD Workflow" />
+            </div>
         </section>"""
 
     html = f"""<!DOCTYPE html>
@@ -480,6 +490,15 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             height: auto;
             border-radius: 8px;
             border: 1px solid #0f3460;
+        }}
+        .diagram-pair {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }}
+        .diagram-pair img {{
+            width: 100%;
+            height: auto;
         }}
         footer {{
             text-align: center;
@@ -657,6 +676,9 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             }}
             .scouting-bullets li {{
                 font-size: 0.82rem;
+            }}
+            .diagram-pair {{
+                grid-template-columns: 1fr;
             }}
         }}
     </style>

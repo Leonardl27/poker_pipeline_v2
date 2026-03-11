@@ -1013,6 +1013,92 @@ def plot_pipeline_diagram(save_path: Optional[str] = None):
         plt.show()
 
 
+def plot_cicd_diagram(save_path: Optional[str] = None):
+    """Create a visual diagram of the CI/CD workflow."""
+    fig, ax = plt.subplots(figsize=(14, 7))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 7)
+    ax.axis('off')
+    fig.patch.set_facecolor('#1a1a2e')
+
+    # Colors (match pipeline diagram)
+    bg = '#16213e'
+    border = '#0f3460'
+    accent = '#e94560'
+    teal = '#2a9d8f'
+    gold = '#e9c46a'
+    green = '#4caf50'
+    text_color = '#eee'
+    arrow_color = '#aaa'
+
+    def draw_box(x, y, w, h, label, sublabel=None, color=border, fc=bg):
+        rect = plt.Rectangle((x, y), w, h, linewidth=2, edgecolor=color,
+                              facecolor=fc, zorder=2, clip_on=False)
+        ax.add_patch(rect)
+        if sublabel:
+            ax.text(x + w/2, y + h/2 + 0.15, label, ha='center', va='center',
+                    fontsize=11, fontweight='bold', color=text_color, zorder=3)
+            ax.text(x + w/2, y + h/2 - 0.2, sublabel, ha='center', va='center',
+                    fontsize=8, color='#aaa', zorder=3, style='italic')
+        else:
+            ax.text(x + w/2, y + h/2, label, ha='center', va='center',
+                    fontsize=11, fontweight='bold', color=text_color, zorder=3)
+
+    def draw_arrow(x1, y1, x2, y2):
+        ax.annotate('', xy=(x2, y2), xytext=(x1, y1),
+                    arrowprops=dict(arrowstyle='->', color=arrow_color,
+                                    lw=2, connectionstyle='arc3,rad=0'),
+                    zorder=1)
+
+    # Title
+    ax.text(7, 6.5, 'CI/CD Workflow', ha='center', va='center',
+            fontsize=18, fontweight='bold', color=accent)
+
+    # ── LEFT BRANCH: Push to Main ──────────────────────────────────
+    ax.text(3.5, 5.8, 'PUSH TO MAIN', ha='center', fontsize=9,
+            color=gold, fontweight='bold')
+
+    draw_box(1.5, 4.8, 4, 0.8, 'git push main', color=teal)
+    draw_arrow(3.5, 4.8, 3.5, 4.1)
+
+    draw_box(1.5, 3.2, 4, 0.8, 'verify_dashboard.py', 'Build + Validate', color=accent)
+    draw_arrow(3.5, 3.2, 3.5, 2.5)
+
+    draw_box(1.5, 1.6, 4, 0.8, 'Deploy to Pages', 'GitHub Actions', color=green)
+    draw_arrow(3.5, 1.6, 3.5, 0.9)
+
+    draw_box(1.5, 0.0, 4, 0.8, 'Live Dashboard', 'leonardl27.github.io', color=green,
+             fc='#1e2a3e')
+
+    # ── RIGHT BRANCH: Pull Request ─────────────────────────────────
+    ax.text(10.5, 5.8, 'PULL REQUEST', ha='center', fontsize=9,
+            color=gold, fontweight='bold')
+
+    draw_box(8.5, 4.8, 4, 0.8, 'Open PR to main', color=teal)
+    draw_arrow(10.5, 4.8, 10.5, 4.1)
+
+    draw_box(8.5, 3.2, 4, 0.8, 'verify_dashboard.py', 'Build + Validate', color=accent)
+    draw_arrow(10.5, 3.2, 10.5, 2.5)
+
+    draw_box(8.5, 1.6, 4, 0.8, 'Bot PR Comment', 'Pass/Fail + Preview', color='#38bdf8')
+    draw_arrow(10.5, 1.6, 10.5, 0.9)
+
+    draw_box(8.5, 0.0, 4, 0.8, 'Human Review', 'Approve & Merge', color='#38bdf8',
+             fc='#1e2a3e')
+
+    # Merge arrow from PR side back to push side
+    draw_arrow(8.5, 0.4, 5.5, 0.4)
+    ax.text(7, 0.55, 'merge', ha='center', fontsize=8, color='#aaa', style='italic')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='#1a1a2e')
+        print(f"Saved: {save_path}")
+    else:
+        plt.show()
+
+
 def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = ".",
                                 min_games: int = 0):
     """Generate all visualizations and save to files."""
@@ -1030,6 +1116,7 @@ def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = "."
     plot_stat_correlations(db_path, str(output / "stat_correlations.png"), min_games=min_games)
     plot_profit_drivers(db_path, str(output / "profit_drivers.png"), min_games=min_games)
     plot_pipeline_diagram(str(output / "pipeline_diagram.png"))
+    plot_cicd_diagram(str(output / "cicd_diagram.png"))
 
     print("\nAll visualizations generated!")
 
