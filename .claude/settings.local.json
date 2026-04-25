@@ -25,7 +25,25 @@
       "Bash(git checkout -b feature/momentum-dashboard)",
       "Bash(gh pr:*)",
       "Bash(git pull origin main)",
-      "Bash(python3 -c \":*)"
+      "Bash(python3 -c \":*)",
+      "WebFetch(domain:github.com)",
+      "Bash(python3:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(gh run view 22812354012 --log)",
+      "Bash(gh run view 22812354012 --json jobs --jq '.jobs[0].steps[] | select\\(.name == \"\"Generate dashboard\"\"\\) | .conclusion')",
+      "Bash(gh run view 22812598698 --log)",
+      "WebFetch(domain:www.myholdempokertips.com)",
+      "WebFetch(domain:www.splitsuit.com)",
+      "WebFetch(domain:pokercopilot.com)",
+      "WebFetch(domain:www.pokertracker.com)",
+      "WebFetch(domain:www.gipsyteam.com)",
+      "WebFetch(domain:pt4.pokertracker.com)",
+      "WebFetch(domain:network.pokernow.club)",
+      "WebFetch(domain:network.pokernow.com)",
+      "WebFetch(domain:leonardl27.github.io)",
+      "Bash(pip install -r requirements.txt)",
+      "Bash(pip install scipy)",
+      "Bash(ls -la C:/Users/leona/appdev/poker_pipeline_v2/*.py)"
     ]
   }
 }

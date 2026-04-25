@@ -191,6 +191,8 @@ canonical_players:
         nickname: "kevdog"
       - id: "4HiZJGv1Zm"
         nickname: "Kevbot420"
+      - id: "4HiZJGv1Zm"
+        nickname: "Kevdoodle"
       - id: "X0oOirQ0_D"
         nickname: "Kevin"
 
@@ -311,3 +313,15 @@ canonical_players:
         nickname: "Roscoe"
       - id: "IxqhiMgj9P"
         nickname: "Roscoe"
+
+  - id: 25
+    name: "Colter"
+    aliases:
+      - id: "_XC53PXz-T"
+        nickname: "Colter"
+
+  - id: 26
+    name: "Hansel"
+    aliases:
+      - id: "GjNBC1ApZ8"
+        nickname: "Hansel"
