@@ -17,7 +17,7 @@ from pathlib import Path
 from database import get_connection
 from ingest import ingest_directory
 from mappings import load_mappings
-from visualize import get_player_statistics, generate_all_visualizations
+from visualize import get_player_statistics, generate_all_visualizations, get_recent_session_avg_per_hand
 from hud_stats import calculate_hud_stats
 from scouting import generate_scouting_report
 
@@ -92,6 +92,9 @@ def get_table_data(db_path: str) -> list:
     hud = calculate_hud_stats(db_path)
     hud_by_name = {h["name"]: h for h in hud}
 
+    # Recent-session avg/hand trajectory (last 5 sessions per player)
+    momentum_by_name = get_recent_session_avg_per_hand(db_path, n=5, min_games=MIN_GAMES)
+
     rows = []
     for row in stats:
         hands_played = row["hands_played"]
@@ -135,6 +138,7 @@ def get_table_data(db_path: str) -> list:
                          if h.get("cbet_pct") is not None else None),
             "fold_to_cbet_pct": (round(h["fold_to_cbet_pct"], 1)
                                  if h.get("fold_to_cbet_pct") is not None else None),
+            "momentum": [v for _, v in momentum_by_name.get(row["name"], [])],
         })
     return rows
 
@@ -159,6 +163,68 @@ def _stat_bar_color(stat_name: str, value: float) -> str:
         if value <= limit:
             return color
     return thresholds[-1][1]
+
+
+def _momentum_sparkline_svg(values: list, width: int = 110, height: int = 32) -> str:
+    """Render a small inline-SVG sparkline of avg/hand values with a trend arrow.
+
+    Each session is a point connected by a polyline; points are colored green if
+    positive, red if negative. A trend arrow compares the last value to the first.
+    """
+    if not values:
+        return '<span class="momentum-na" title="Fewer than 1 recorded session">--</span>'
+
+    pad = 3
+    n = len(values)
+    vmin = min(values)
+    vmax = max(values)
+    # Symmetric around zero so the baseline is meaningful
+    bound = max(abs(vmin), abs(vmax), 0.01)
+    lo, hi = -bound, bound
+
+    def x(i):
+        if n == 1:
+            return width / 2
+        return pad + (width - 2 * pad) * (i / (n - 1))
+
+    def y(v):
+        # Map [lo, hi] -> [height-pad, pad]  (higher value = higher on chart)
+        frac = (v - lo) / (hi - lo) if hi > lo else 0.5
+        return height - pad - frac * (height - 2 * pad)
+
+    zero_y = y(0)
+    points = " ".join(f"{x(i):.1f},{y(v):.1f}" for i, v in enumerate(values))
+    circles = "".join(
+        f'<circle cx="{x(i):.1f}" cy="{y(v):.1f}" r="2.2" fill="{"#4caf50" if v >= 0 else "#e94560"}" />'
+        for i, v in enumerate(values)
+    )
+
+    # Trend arrow: compare last to first (or last to mean if only 1 point)
+    if n >= 2:
+        delta = values[-1] - values[0]
+    else:
+        delta = values[-1]
+    if delta > 0.05:
+        arrow, arrow_color = "↑", "#4caf50"
+    elif delta < -0.05:
+        arrow, arrow_color = "↓", "#e94560"
+    else:
+        arrow, arrow_color = "→", "#aaaaaa"
+
+    title = f"Last {n} sessions avg/hand: " + ", ".join(f"{v:+.2f}" for v in values)
+
+    return (
+        f'<span class="momentum-cell" title="{title}">'
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'xmlns="http://www.w3.org/2000/svg">'
+        f'<line x1="{pad}" y1="{zero_y:.1f}" x2="{width - pad}" y2="{zero_y:.1f}" '
+        f'stroke="#0f3460" stroke-width="1" stroke-dasharray="2,2" />'
+        f'<polyline points="{points}" fill="none" stroke="#5b9bd5" stroke-width="1.5" />'
+        f'{circles}'
+        f'</svg>'
+        f'<span class="momentum-arrow" style="color:{arrow_color}">{arrow}</span>'
+        f'</span>'
+    )
 
 
 def build_player_profiles_html(table_data: list) -> str:
@@ -307,6 +373,7 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
                     <td>{ats_display}</td>
                     <td class="{profit_class}">{profit_display}</td>
                     <td class="{avg_class}">{avg_display}</td>
+                    <td class="momentum-col" data-trend="{(row['momentum'][-1] - row['momentum'][0]) if len(row['momentum']) >= 2 else 0:.4f}">{_momentum_sparkline_svg(row['momentum'])}</td>
                     <td>{row['showdowns']}</td>
                 </tr>"""
 
@@ -462,6 +529,22 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         td:first-child {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             font-weight: 500;
+        }}
+        .momentum-cell {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }}
+        .momentum-cell svg {{
+            display: block;
+        }}
+        .momentum-arrow {{
+            font-weight: bold;
+            font-size: 1rem;
+        }}
+        .momentum-na {{
+            color: #666;
+            font-style: italic;
         }}
         .positive {{
             color: #4caf50;
@@ -725,7 +808,8 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
                         <th onclick="sortTable(8, 'number')" title="Attempt to Steal">ATS% &#8597;</th>
                         <th onclick="sortTable(9, 'number')">Profit/Loss &#8597;</th>
                         <th onclick="sortTable(10, 'number')">Avg/Hand &#8597;</th>
-                        <th onclick="sortTable(11, 'number')">Showdowns &#8597;</th>
+                        <th onclick="sortTable(11, 'momentum')" title="Avg/hand trajectory across the last 5 sessions. Sort by trend slope (newest minus oldest).">Momentum (5) &#8597;</th>
+                        <th onclick="sortTable(12, 'number')">Showdowns &#8597;</th>
                     </tr>
                 </thead>
                 <tbody>{table_rows}
@@ -758,6 +842,11 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             var dir = table.dataset.sortDir === "asc" ? 1 : -1;
 
             rows.sort(function(a, b) {{
+                if (type === "momentum") {{
+                    var aT = parseFloat(a.cells[colIdx].getAttribute("data-trend") || "0");
+                    var bT = parseFloat(b.cells[colIdx].getAttribute("data-trend") || "0");
+                    return (aT - bT) * dir;
+                }}
                 var aVal = a.cells[colIdx].textContent.replace(/[+%,]/g, "").trim();
                 var bVal = b.cells[colIdx].textContent.replace(/[+%,]/g, "").trim();
                 if (type === "number") {{
