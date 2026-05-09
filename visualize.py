@@ -230,6 +230,50 @@ def get_per_session_stats(db_path: str = "poker.db", use_enriched: bool = True,
     return rows
 
 
+def get_recent_session_avg_per_hand(db_path: str = "poker.db", n: int = 5,
+                                    min_games: int = 3) -> dict:
+    """Per-player list of avg-profit-per-hand for the most recent N sessions.
+
+    Returns {player_name: [(session_start_ms, avg_per_hand), ...]} ordered chronologically
+    (oldest -> newest). Only players with >= min_games sessions overall are included.
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    query = """
+        SELECT sub.name, sub.game_id, sub.session_start, sub.session_profit, sub.session_hands
+        FROM (
+            SELECT
+                vhp.cid                    AS player_id,
+                vhp.name                   AS name,
+                h.game_id                  AS game_id,
+                MIN(h.started_at)          AS session_start,
+                SUM(vhp.net_gain) / 100.0  AS session_profit,
+                COUNT(*)                   AS session_hands,
+                COUNT(h.game_id) OVER (PARTITION BY vhp.cid) AS games_played
+            FROM v_hand_players vhp
+            JOIN hands h ON vhp.hand_id = h.id
+            GROUP BY vhp.cid, h.game_id
+        ) sub
+        WHERE sub.games_played >= ?
+        ORDER BY sub.name, sub.session_start, sub.game_id
+    """
+    cursor.execute(query, (min_games,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    by_player: dict = defaultdict(list)
+    for r in rows:
+        hands = r['session_hands'] or 0
+        if hands == 0:
+            continue
+        avg = (r['session_profit'] or 0) / hands
+        by_player[r['name']].append((r['session_start'], avg))
+
+    # Keep only the last N (most recent) per player, preserving chronological order
+    return {name: sessions[-n:] for name, sessions in by_player.items()}
+
+
 def plot_player_statistics(db_path: str = "poker.db", save_path: Optional[str] = None,
                            min_games: int = 0):
     """Create player statistics visualizations."""
