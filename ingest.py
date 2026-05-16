@@ -87,15 +87,17 @@ def ingest_file(json_path: str, db_path: str = "poker.db") -> dict:
                 """, (player_id, player_name))
                 stats["players_added"] += 1
 
-            # Insert hand_player record
+            # Insert hand_player record (records the per-hand nickname so
+            # multiple aliases per player_id are preserved downstream)
             hole_cards = player.get("hand", [])
             cursor.execute("""
                 INSERT OR REPLACE INTO hand_players
-                (hand_id, player_id, seat, stack, hole_card_1, hole_card_2, net_gain, showed_cards)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (hand_id, player_id, nickname, seat, stack, hole_card_1, hole_card_2, net_gain, showed_cards)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 hand_id,
                 player_id,
+                player_name,
                 seat,
                 player.get("stack"),
                 hole_cards[0] if len(hole_cards) > 0 else None,
