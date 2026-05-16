@@ -119,6 +119,10 @@ def list_unmapped_players(db_path: str = "poker.db") -> list:
     """
     Return all (player_id, nickname) pairs that are not mapped to canonical players.
 
+    Iterates over hand_players directly so every nickname a player_id has
+    used across hands is checked, not just the first-seen one stored in the
+    `players` table.
+
     Includes hand count for prioritization.
     """
     conn = get_connection(db_path)
@@ -126,14 +130,16 @@ def list_unmapped_players(db_path: str = "poker.db") -> list:
 
     cursor.execute("""
         SELECT
-            p.id as player_id,
-            p.name as nickname,
-            COUNT(DISTINCT hp.hand_id) as hands_played
-        FROM players p
-        JOIN hand_players hp ON p.id = hp.player_id
-        LEFT JOIN player_mappings pm ON p.id = pm.raw_player_id AND p.name = pm.nickname
+            hp.player_id                 AS player_id,
+            COALESCE(hp.nickname, p.name) AS nickname,
+            COUNT(DISTINCT hp.hand_id)   AS hands_played
+        FROM hand_players hp
+        LEFT JOIN players p ON hp.player_id = p.id
+        LEFT JOIN player_mappings pm
+            ON hp.player_id = pm.raw_player_id
+           AND COALESCE(hp.nickname, p.name) = pm.nickname
         WHERE pm.id IS NULL
-        GROUP BY p.id, p.name
+        GROUP BY hp.player_id, COALESCE(hp.nickname, p.name)
         ORDER BY hands_played DESC
     """)
 
@@ -155,12 +161,12 @@ def export_players_template(db_path: str = "poker.db") -> str:
 
     cursor.execute("""
         SELECT
-            p.id as player_id,
-            p.name as nickname,
-            COUNT(DISTINCT hp.hand_id) as hands_played
-        FROM players p
-        JOIN hand_players hp ON p.id = hp.player_id
-        GROUP BY p.id, p.name
+            hp.player_id                 AS player_id,
+            COALESCE(hp.nickname, p.name) AS nickname,
+            COUNT(DISTINCT hp.hand_id)   AS hands_played
+        FROM hand_players hp
+        LEFT JOIN players p ON hp.player_id = p.id
+        GROUP BY hp.player_id, COALESCE(hp.nickname, p.name)
         ORDER BY hands_played DESC
     """)
 

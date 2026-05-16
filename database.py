@@ -54,11 +54,17 @@ def init_database(db_path: str = "poker.db") -> None:
     """)
 
     # Hand players table - player state for each hand
+    # `nickname` records the per-hand display name so we can capture every
+    # (player_id, nickname) variant a player uses across sessions. Without it,
+    # the `players` table collapses to one nickname per id and downstream
+    # mapping/unmapped checks miss aliases the player only ever used in newer
+    # hands.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS hand_players (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             hand_id TEXT NOT NULL,
             player_id TEXT NOT NULL,
+            nickname TEXT,
             seat INTEGER,
             stack INTEGER,
             hole_card_1 TEXT,
@@ -147,6 +153,7 @@ def init_database(db_path: str = "poker.db") -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hands_game ON hands(game_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hand_players_hand ON hand_players(hand_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hand_players_player ON hand_players(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hand_players_player_nick ON hand_players(player_id, nickname)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_hand ON events(hand_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hand_results_hand ON hand_results(hand_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hand_results_player ON hand_results(player_id)")
@@ -155,19 +162,24 @@ def init_database(db_path: str = "poker.db") -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hands_started_at ON hands(started_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_hand_type ON events(hand_id, event_type, event_time)")
 
-    # View: canonical player resolution (replaces repeated 4-table JOIN + COALESCE)
+    # View: canonical player resolution. Joins player_mappings on the
+    # per-hand nickname (hp.nickname) rather than the first-seen nickname
+    # stored in `players`, so every (player_id, nickname) variant resolves
+    # independently. Falls back to p.name for legacy rows where
+    # hp.nickname is NULL.
     cursor.execute("""
         CREATE VIEW IF NOT EXISTS v_hand_players AS
         SELECT
             hp.id, hp.hand_id, hp.player_id, hp.seat, hp.stack,
             hp.hole_card_1, hp.hole_card_2, hp.net_gain, hp.showed_cards,
-            COALESCE(cp.name, p.name)                           AS name,
-            COALESCE('canonical_' || CAST(cp.id AS TEXT), p.id) AS cid,
-            p.name                                               AS raw_name
+            COALESCE(cp.name, hp.nickname, p.name)                    AS name,
+            COALESCE('canonical_' || CAST(cp.id AS TEXT), hp.player_id) AS cid,
+            COALESCE(hp.nickname, p.name)                              AS raw_name
         FROM hand_players hp
-        JOIN players p ON hp.player_id = p.id
+        LEFT JOIN players p ON hp.player_id = p.id
         LEFT JOIN player_mappings pm
-            ON p.id = pm.raw_player_id AND p.name = pm.nickname
+            ON hp.player_id = pm.raw_player_id
+           AND COALESCE(hp.nickname, p.name) = pm.nickname
         LEFT JOIN canonical_players cp ON pm.canonical_id = cp.id
     """)
 
