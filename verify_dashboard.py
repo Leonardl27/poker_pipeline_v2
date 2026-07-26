@@ -24,9 +24,10 @@ from generate_dashboard import (
     run_pipeline, generate_chart_base64, get_table_data, build_html,
     DB_PATH, MIN_GAMES,
 )
+from visualize import get_latest_session_summary
 
 EXPECTED_CHARTS = [
-    "player_statistics.png",
+    "player_archetypes.png",
     "hand_analysis.png",
     "session_trends.png",
     "momentum.png",
@@ -113,13 +114,15 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
     # ── Step 5: Build and validate HTML ───────────────────────────────
     print("[5/5] Building and validating HTML...")
     try:
-        html = build_html(summary, charts, table_data)
+        latest_session = get_latest_session_summary(DB_PATH)
+        html = build_html(summary, charts, table_data, latest_session)
     except Exception as e:
         errors.append(f"HTML build failed: {e}")
         return errors, warnings
 
     # Check for key sections
-    for section_name in ["Player Leaderboard", "Player Profiles", "Scouting Report"]:
+    for section_name in ["Latest Session", "Player Leaderboard", "Player Profiles",
+                         "Scouting Report"]:
         if section_name not in html:
             errors.append(f"Missing '{section_name}' section in HTML")
 

@@ -14,6 +14,26 @@ import matplotlib.dates as mdates
 from datetime import datetime
 from database import get_connection, EVENT_TYPES
 
+# ── Dashboard dark theme (must match index.html styling) ──────────────
+DARK_BG = '#1a1a2e'
+DARK_PANEL = '#16213e'
+DARK_BORDER = '#0f3460'
+DARK_ACCENT = '#e94560'
+DARK_POSITIVE = '#4caf50'
+DARK_TEXT = '#eeeeee'
+DARK_NEUTRAL = '#aaaaaa'
+
+
+def _style_dark_axes(ax):
+    """Apply the dashboard dark theme to a single Axes."""
+    ax.set_facecolor(DARK_PANEL)
+    for spine in ax.spines.values():
+        spine.set_color(DARK_BORDER)
+    ax.tick_params(colors=DARK_TEXT, labelcolor=DARK_TEXT)
+    ax.xaxis.label.set_color(DARK_TEXT)
+    ax.yaxis.label.set_color(DARK_TEXT)
+    ax.title.set_color(DARK_TEXT)
+
 
 def get_player_statistics(db_path: str = "poker.db", use_enriched: bool = True,
                           min_games: int = 0) -> list:
@@ -274,6 +294,59 @@ def get_recent_session_avg_per_hand(db_path: str = "poker.db", n: int = 5,
     return {name: sessions[-n:] for name, sessions in by_player.items()}
 
 
+def get_latest_session_summary(db_path: str = "poker.db") -> Optional[dict]:
+    """Summary of the most recent session: date, hands dealt, per-player results.
+
+    Returns {"date_label", "session_start", "hands_dealt", "players"} where
+    players is a list of {"name", "profit", "hands"} sorted by profit descending,
+    or None if the database has no sessions.
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT h.game_id, MIN(h.started_at) AS session_start,
+               COUNT(DISTINCT h.id) AS hands_dealt
+        FROM hands h
+        GROUP BY h.game_id
+        ORDER BY session_start DESC
+        LIMIT 1
+    """)
+    latest = cursor.fetchone()
+    if not latest:
+        conn.close()
+        return None
+
+    cursor.execute("""
+        SELECT vhp.name,
+               SUM(vhp.net_gain) / 100.0 AS profit,
+               COUNT(DISTINCT vhp.hand_id) AS hands
+        FROM v_hand_players vhp
+        JOIN hands h ON vhp.hand_id = h.id
+        WHERE h.game_id = ?
+        GROUP BY vhp.cid
+        ORDER BY profit DESC
+    """, (latest['game_id'],))
+    players = [
+        {"name": r['name'], "profit": r['profit'] or 0, "hands": r['hands']}
+        for r in cursor.fetchall()
+    ]
+    conn.close()
+
+    try:
+        date_label = datetime.fromtimestamp(
+            latest['session_start'] / 1000).strftime('%B %d, %Y')
+    except (ValueError, TypeError, OSError):
+        date_label = "Unknown date"
+
+    return {
+        "date_label": date_label,
+        "session_start": latest['session_start'],
+        "hands_dealt": latest['hands_dealt'],
+        "players": players,
+    }
+
+
 def plot_player_statistics(db_path: str = "poker.db", save_path: Optional[str] = None,
                            min_games: int = 0):
     """Create player statistics visualizations."""
@@ -284,7 +357,9 @@ def plot_player_statistics(db_path: str = "poker.db", save_path: Optional[str] =
         return
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('Player Statistics', fontsize=16, fontweight='bold')
+    fig.patch.set_facecolor(DARK_BG)
+    fig.suptitle('Player Statistics', fontsize=16, fontweight='bold',
+                 color=DARK_ACCENT)
 
     names = [row['name'] for row in stats]
     profits = [row['total_profit'] or 0 for row in stats]
@@ -297,36 +372,117 @@ def plot_player_statistics(db_path: str = "poker.db", save_path: Optional[str] =
 
     # Total profit bar chart
     ax1 = axes[0, 0]
-    colors = ['green' if p >= 0 else 'red' for p in profits]
+    colors = [DARK_POSITIVE if p >= 0 else DARK_ACCENT for p in profits]
     ax1.barh(names, profits, color=colors)
     ax1.set_xlabel('Total Profit/Loss')
     ax1.set_title('Total Profit/Loss by Player')
-    ax1.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
+    ax1.axvline(x=0, color=DARK_NEUTRAL, linestyle='-', linewidth=0.5)
 
     # Hands played bar chart
     ax2 = axes[0, 1]
-    ax2.barh(names, hands, color='steelblue')
+    ax2.barh(names, hands, color='#38bdf8')
     ax2.set_xlabel('Number of Hands')
     ax2.set_title('Hands Played by Player')
 
     # Win rate bar chart
     ax3 = axes[1, 0]
-    ax3.barh(names, win_rates, color='orange')
+    ax3.barh(names, win_rates, color='#e9a945')
     ax3.set_xlabel('Win Rate (%)')
     ax3.set_title('Win Rate by Player (% of hands won)')
 
     # Average profit per hand
     ax4 = axes[1, 1]
-    colors = ['green' if p >= 0 else 'red' for p in avg_profits]
+    colors = [DARK_POSITIVE if p >= 0 else DARK_ACCENT for p in avg_profits]
     ax4.barh(names, avg_profits, color=colors)
     ax4.set_xlabel('Avg Profit per Hand')
     ax4.set_title('Average Profit per Hand')
-    ax4.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
+    ax4.axvline(x=0, color=DARK_NEUTRAL, linestyle='-', linewidth=0.5)
+
+    for ax in axes.flat:
+        _style_dark_axes(ax)
+        ax.grid(axis='x', color=DARK_BORDER, alpha=0.6, linewidth=0.5)
+        ax.set_axisbelow(True)
 
     plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor=DARK_BG)
+        print(f"Saved: {save_path}")
+    else:
+        plt.show()
+
+
+def plot_player_archetypes(db_path: str = "poker.db", save_path: Optional[str] = None,
+                           min_games: int = 0):
+    """VPIP vs PFR quadrant scatter mapping each player to a playing-style archetype.
+
+    Quadrant boundaries are the group medians (this crew plays far looser than
+    textbook online ranges, so fixed thresholds would lump everyone together).
+    Point size = hands played, color = net profit (green) / loss (red).
+    """
+    from statistics import median
+    from hud_stats import calculate_hud_stats
+
+    stats = get_player_statistics(db_path, min_games=min_games)
+    profit_by_name = {row['name']: (row['total_profit'] or 0) for row in stats}
+    hands_by_name = {row['name']: row['hands_played'] for row in stats}
+
+    players = [h for h in calculate_hud_stats(db_path) if h['name'] in profit_by_name]
+    if len(players) < 3:
+        print("Not enough players for archetype chart")
+        return
+
+    xs = [p['conv_vpip_pct'] for p in players]
+    ys = [p['pfr_pct'] for p in players]
+    x_med = median(xs)
+    y_med = median(ys)
+
+    fig, ax = plt.subplots(figsize=(14, 9))
+    fig.patch.set_facecolor(DARK_BG)
+    fig.suptitle('Player Archetypes — VPIP vs PFR', color=DARK_ACCENT,
+                 fontsize=16, fontweight='bold')
+    _style_dark_axes(ax)
+    ax.grid(color=DARK_BORDER, alpha=0.6, linewidth=0.5)
+    ax.set_axisbelow(True)
+
+    # Median guide lines split the group into four style quadrants
+    ax.axvline(x_med, color=DARK_NEUTRAL, linestyle='--', linewidth=1, alpha=0.6)
+    ax.axhline(y_med, color=DARK_NEUTRAL, linestyle='--', linewidth=1, alpha=0.6)
+
+    max_hands = max(hands_by_name.values()) or 1
+    for p in players:
+        name = p['name']
+        profit = profit_by_name[name]
+        size = 80 + 400 * (hands_by_name[name] / max_hands)
+        color = DARK_POSITIVE if profit >= 0 else DARK_ACCENT
+        ax.scatter(p['conv_vpip_pct'], p['pfr_pct'], s=size, color=color,
+                   alpha=0.75, edgecolors=DARK_TEXT, linewidths=0.8, zorder=3)
+        ax.annotate(name, (p['conv_vpip_pct'], p['pfr_pct']),
+                    xytext=(0, 12), textcoords='offset points',
+                    ha='center', color=DARK_TEXT, fontsize=9, zorder=4)
+
+    # Quadrant labels in the axes corners
+    quad_labels = [
+        (0.02, 0.97, 'TIGHT-AGGRESSIVE\n"The Shark"', 'left', 'top'),
+        (0.98, 0.97, 'LOOSE-AGGRESSIVE\n"The Maniac"', 'right', 'top'),
+        (0.02, 0.03, 'TIGHT-PASSIVE\n"The Rock"', 'left', 'bottom'),
+        (0.98, 0.03, 'LOOSE-PASSIVE\n"The Calling Station"', 'right', 'bottom'),
+    ]
+    for qx, qy, label, ha, va in quad_labels:
+        ax.text(qx, qy, label, transform=ax.transAxes, ha=ha, va=va,
+                color=DARK_NEUTRAL, fontsize=10, fontweight='bold', alpha=0.7)
+
+    ax.set_xlabel('VPIP% — how many hands they play')
+    ax.set_ylabel('PFR% — how often they raise preflop')
+    ax.text(0.5, -0.09,
+            'Dashed lines = group medians. Bubble size = hands played. '
+            'Green = lifetime winner, red = lifetime loser.',
+            transform=ax.transAxes, ha='center', color=DARK_NEUTRAL, fontsize=9)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor=DARK_BG)
         print(f"Saved: {save_path}")
     else:
         plt.show()
@@ -348,7 +504,9 @@ def plot_hand_analysis(db_path: str = "poker.db", save_path: Optional[str] = Non
     data = get_hand_distributions(db_path)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle('Hand Analysis', fontsize=16, fontweight='bold')
+    fig.patch.set_facecolor(DARK_BG)
+    fig.suptitle('Hand Analysis', fontsize=16, fontweight='bold',
+                 color=DARK_ACCENT)
 
     # Winning hand distribution — grouped by category
     ax1 = axes[0]
@@ -375,9 +533,10 @@ def plot_hand_analysis(db_path: str = "poker.db", save_path: Optional[str] = Non
         # Add count labels on bars
         for i, (count, name) in enumerate(zip(sorted_counts, sorted_categories)):
             ax1.text(count + max(sorted_counts) * 0.01, i, str(count),
-                     va='center', fontsize=9, fontweight='bold')
+                     va='center', fontsize=9, fontweight='bold', color=DARK_TEXT)
     else:
-        ax1.text(0.5, 0.5, 'No hand data available', ha='center', va='center')
+        ax1.text(0.5, 0.5, 'No hand data available', ha='center', va='center',
+                 color=DARK_TEXT)
 
     # Action distribution — filter out unknown types
     ax2 = axes[1]
@@ -391,21 +550,27 @@ def plot_hand_analysis(db_path: str = "poker.db", save_path: Optional[str] = Non
             action_names.append(name)
             action_counts.append(row['count'])
 
-        ax2.barh(action_names, action_counts, color='teal')
+        ax2.barh(action_names, action_counts, color='#2a9d8f')
         ax2.set_xlabel('Count')
         ax2.set_title('Action Distribution')
 
         # Add count labels on bars
         for i, count in enumerate(action_counts):
             ax2.text(count + max(action_counts) * 0.01, i, f'{count:,}',
-                     va='center', fontsize=9)
+                     va='center', fontsize=9, color=DARK_TEXT)
     else:
-        ax2.text(0.5, 0.5, 'No action data available', ha='center', va='center')
+        ax2.text(0.5, 0.5, 'No action data available', ha='center', va='center',
+                 color=DARK_TEXT)
+
+    for ax in axes.flat:
+        _style_dark_axes(ax)
+        ax.grid(axis='x', color=DARK_BORDER, alpha=0.6, linewidth=0.5)
+        ax.set_axisbelow(True)
 
     plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor=DARK_BG)
         print(f"Saved: {save_path}")
     else:
         plt.show()
@@ -586,7 +751,7 @@ def plot_session_trends(db_path: str = "poker.db", save_path: Optional[str] = No
     plt.tight_layout(rect=[0, 0, 1, 0.95])
 
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+        plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor=BG)
         print(f"Saved: {save_path}")
     else:
         plt.show()
@@ -710,7 +875,7 @@ def plot_momentum(db_path: str = "poker.db", save_path: Optional[str] = None,
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+        plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor=BG)
         print(f"Saved: {save_path}")
     else:
         plt.show()
@@ -748,7 +913,7 @@ def plot_stat_correlations(db_path: str = "poker.db", save_path: Optional[str] =
         ax.set_xticks([])
         ax.set_yticks([])
         if save_path:
-            plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+            plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor=BG)
             print(f"Saved: {save_path}")
         plt.close(fig)
         return
@@ -823,7 +988,7 @@ def plot_stat_correlations(db_path: str = "poker.db", save_path: Optional[str] =
 
     plt.tight_layout()
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+        plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor=BG)
         print(f"Saved: {save_path}")
     else:
         plt.show()
@@ -860,7 +1025,7 @@ def plot_profit_drivers(db_path: str = "poker.db", save_path: Optional[str] = No
         ax.set_xticks([])
         ax.set_yticks([])
         if save_path:
-            plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+            plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor=BG)
             print(f"Saved: {save_path}")
         plt.close(fig)
         return
@@ -906,7 +1071,7 @@ def plot_profit_drivers(db_path: str = "poker.db", save_path: Optional[str] = No
         ax.set_xticks([])
         ax.set_yticks([])
         if save_path:
-            plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+            plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor=BG)
             print(f"Saved: {save_path}")
         plt.close(fig)
         return
@@ -955,7 +1120,7 @@ def plot_profit_drivers(db_path: str = "poker.db", save_path: Optional[str] = No
 
     plt.tight_layout()
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=BG)
+        plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor=BG)
         print(f"Saved: {save_path}")
     else:
         plt.show()
@@ -1051,7 +1216,7 @@ def plot_pipeline_diagram(save_path: Optional[str] = None):
     plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='#1a1a2e')
+        plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor='#1a1a2e')
         print(f"Saved: {save_path}")
     else:
         plt.show()
@@ -1137,7 +1302,7 @@ def plot_cicd_diagram(save_path: Optional[str] = None):
     plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='#1a1a2e')
+        plt.savefig(save_path, dpi=110, bbox_inches='tight', facecolor='#1a1a2e')
         print(f"Saved: {save_path}")
     else:
         plt.show()
@@ -1153,7 +1318,7 @@ def generate_all_visualizations(db_path: str = "poker.db", output_dir: str = "."
 
     print("Generating visualizations...")
 
-    plot_player_statistics(db_path, str(output / "player_statistics.png"), min_games=min_games)
+    plot_player_archetypes(db_path, str(output / "player_archetypes.png"), min_games=min_games)
     plot_hand_analysis(db_path, str(output / "hand_analysis.png"))
     plot_session_trends(db_path, str(output / "session_trends.png"), min_games=min_games)
     plot_momentum(db_path, str(output / "momentum.png"), min_games=min_games)

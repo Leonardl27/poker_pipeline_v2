@@ -17,7 +17,10 @@ from pathlib import Path
 from database import get_connection
 from ingest import ingest_directory
 from mappings import load_mappings
-from visualize import get_player_statistics, generate_all_visualizations, get_recent_session_avg_per_hand
+from visualize import (
+    get_player_statistics, generate_all_visualizations,
+    get_recent_session_avg_per_hand, get_latest_session_summary,
+)
 from hud_stats import calculate_hud_stats
 from scouting import generate_scouting_report
 
@@ -73,7 +76,7 @@ def generate_chart_base64(db_path: str, output_dir: str) -> dict:
     generate_all_visualizations(db_path, output_dir, min_games=MIN_GAMES)
 
     charts = {}
-    for chart_name in ["player_statistics.png", "hand_analysis.png", "session_trends.png",
+    for chart_name in ["player_archetypes.png", "hand_analysis.png", "session_trends.png",
                        "momentum.png", "stat_correlations.png", "profit_drivers.png",
                        "pipeline_diagram.png", "cicd_diagram.png"]:
         chart_path = Path(output_dir) / chart_name
@@ -345,13 +348,57 @@ def build_player_profiles_html(table_data: list) -> str:
         </section>'''
 
 
-def build_html(summary: dict, charts: dict, table_data: list) -> str:
+def build_latest_session_html(latest: dict) -> str:
+    """Build the 'Latest Session' hero section shown under the summary cards."""
+    if not latest or not latest.get("players"):
+        return ""
+
+    players = latest["players"]
+    winner = players[0]
+    loser = players[-1]
+
+    def money(v):
+        return f"+${v:.2f}" if v > 0 else f"-${abs(v):.2f}" if v < 0 else "$0.00"
+
+    chips = ""
+    for i, p in enumerate(players):
+        cls = "positive" if p["profit"] >= 0 else "negative"
+        crown = "&#128081; " if i == 0 and p["profit"] > 0 else ""
+        winner_cls = " chip-winner" if i == 0 and p["profit"] > 0 else ""
+        chips += f'''
+                <span class="session-chip{winner_cls}" title="{p['hands']} hands played">
+                    <span class="chip-name">{crown}{p['name']}</span>
+                    <span class="chip-amount {cls}">{money(p['profit'])}</span>
+                </span>'''
+
+    callouts = ""
+    if winner["profit"] > 0:
+        callouts += (f'<span class="latest-callout">Biggest winner: '
+                     f'<strong class="positive">{winner["name"]} {money(winner["profit"])}</strong></span>')
+    if loser["profit"] < 0:
+        callouts += (f'<span class="latest-callout">Toughest night: '
+                     f'<strong class="negative">{loser["name"]} {money(loser["profit"])}</strong></span>')
+
+    return f'''
+        <section class="latest-session">
+            <div class="latest-header">
+                <h2>&#127922; Latest Session</h2>
+                <span class="latest-meta">{latest['date_label']} &middot; {len(players)} players &middot; {latest['hands_dealt']} hands</span>
+            </div>
+            <div class="latest-callouts">{callouts}</div>
+            <div class="latest-chips">{chips}
+            </div>
+        </section>'''
+
+
+def build_html(summary: dict, charts: dict, table_data: list,
+               latest_session: dict = None) -> str:
     """Build the complete HTML dashboard as a string."""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # Build player stats table rows
+    # Build player stats table rows (table_data is already sorted by profit desc)
     table_rows = ""
-    for row in table_data:
+    for rank, row in enumerate(table_data, start=1):
         profit_class = "positive" if row["total_profit"] >= 0 else "negative"
         profit_display = f"+{row['total_profit']:.2f}" if row["total_profit"] > 0 else f"{row['total_profit']:.2f}"
         avg_class = "positive" if row["avg_profit"] >= 0 else "negative"
@@ -359,9 +406,12 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
 
         ats_display = f"{row['ats_pct']:.1f}%" if row['ats_pct'] is not None else "-"
         slug = row['name'].lower().replace(' ', '-').replace("'", "")
+        row_class = f' class="top-{rank}"' if rank <= 3 else ""
+        badge_class = f"rank-badge rank-{rank}" if rank <= 3 else "rank-badge"
 
         table_rows += f"""
-                <tr onclick="toggleProfile('{slug}')" style="cursor:pointer;" title="Click to view {row['name']}'s profile">
+                <tr{row_class} onclick="toggleProfile('{slug}')" style="cursor:pointer;" title="Click to view {row['name']}'s profile">
+                    <td class="rank-cell"><span class="{badge_class}">{rank}</span></td>
                     <td>{row['name']}</td>
                     <td>{row['games_played']}</td>
                     <td>{row['hands_played']}</td>
@@ -383,8 +433,9 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
     # Build chart sections
     chart_sections = ""
     chart_configs = [
-        ("player_statistics.png", "Player Statistics",
-         "Profit/loss, hands played, win rates, and average profit per hand for each player."),
+        ("player_archetypes.png", "Player Archetypes",
+         "Where everyone falls on the classic VPIP/PFR style map, split at the group medians. "
+         "Bubble size shows hands played; green means lifetime winner, red means lifetime loser."),
         ("hand_analysis.png", "Hand Analysis",
          "Distribution of winning hand types and action frequency across all sessions."),
         ("session_trends.png", "Session Trends",
@@ -426,6 +477,12 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Home-game poker analytics: leaderboard, HUD stats, player profiles, and session trends. Auto-generated from PokerNow session logs.">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta property="og:title" content="Poker Analytics Dashboard">
+    <meta property="og:description" content="Leaderboard, HUD stats, and scouting reports for our home game.">
+    <meta property="og:type" content="website">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90' fill='%23e94560'%3E%E2%99%A0%3C/text%3E%3C/svg%3E">
     <title>Poker Analytics Dashboard</title>
     <style>
         * {{
@@ -484,6 +541,62 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             text-transform: uppercase;
             letter-spacing: 1px;
         }}
+        .latest-session {{
+            margin: 0 20px 10px;
+            padding: 20px 24px;
+            background: #16213e;
+            border: 1px solid #0f3460;
+            border-left: 4px solid #e94560;
+            border-radius: 10px;
+        }}
+        .latest-header {{
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 10px;
+        }}
+        .latest-header h2 {{
+            color: #e94560;
+            font-size: 1.3rem;
+        }}
+        .latest-meta {{
+            color: #aaa;
+            font-size: 0.9rem;
+        }}
+        .latest-callouts {{
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+            color: #aaa;
+            font-size: 0.9rem;
+        }}
+        .latest-chips {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }}
+        .session-chip {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: #1a1a2e;
+            border: 1px solid #0f3460;
+            border-radius: 999px;
+            font-size: 0.85rem;
+        }}
+        .session-chip.chip-winner {{
+            border-color: #e9a945;
+        }}
+        .chip-name {{
+            color: #eee;
+        }}
+        .chip-amount {{
+            font-family: 'Courier New', monospace;
+        }}
         .table-section {{
             padding: 30px 20px;
             overflow-x: auto;
@@ -526,9 +639,46 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
         tr:hover {{
             background: #1e2a4a;
         }}
-        td:first-child {{
+        td:nth-child(2) {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             font-weight: 500;
+        }}
+        .rank-cell {{
+            text-align: center;
+        }}
+        .rank-badge {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-weight: bold;
+            font-size: 0.8rem;
+            background: #0f3460;
+            color: #aaa;
+        }}
+        .rank-badge.rank-1 {{
+            background: #e9a945;
+            color: #1a1a2e;
+        }}
+        .rank-badge.rank-2 {{
+            background: #c0c0c0;
+            color: #1a1a2e;
+        }}
+        .rank-badge.rank-3 {{
+            background: #cd7f32;
+            color: #1a1a2e;
+        }}
+        tr.top-1 td:first-child {{
+            box-shadow: inset 3px 0 0 #e9a945;
+        }}
+        tr.top-2 td:first-child {{
+            box-shadow: inset 3px 0 0 #c0c0c0;
+        }}
+        tr.top-3 td:first-child {{
+            box-shadow: inset 3px 0 0 #cd7f32;
         }}
         .momentum-cell {{
             display: inline-flex;
@@ -792,24 +942,27 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
             </div>
         </section>
 
+        {build_latest_session_html(latest_session)}
+
         <section class="table-section">
             <h2>Player Leaderboard</h2>
             <table id="playerTable">
                 <thead>
                     <tr>
-                        <th onclick="sortTable(0, 'string')">Player &#8597;</th>
-                        <th onclick="sortTable(1, 'number')">Games &#8597;</th>
-                        <th onclick="sortTable(2, 'number')">Hands &#8597;</th>
-                        <th onclick="sortTable(3, 'number')">Wins &#8597;</th>
-                        <th onclick="sortTable(4, 'number')">Win Rate &#8597;</th>
-                        <th onclick="sortTable(5, 'number')" title="PokerNow VPIP: voluntary money on any street (preflop + postflop)">PN VPIP% &#8597;</th>
-                        <th onclick="sortTable(6, 'number')" title="Conventional VPIP: voluntary money preflop only">VPIP% &#8597;</th>
-                        <th onclick="sortTable(7, 'number')" title="Pre-Flop Raise">PFR% &#8597;</th>
-                        <th onclick="sortTable(8, 'number')" title="Attempt to Steal">ATS% &#8597;</th>
-                        <th onclick="sortTable(9, 'number')">Profit/Loss &#8597;</th>
-                        <th onclick="sortTable(10, 'number')">Avg/Hand &#8597;</th>
-                        <th onclick="sortTable(11, 'momentum')" title="Avg/hand trajectory across the last 5 sessions. Sort by trend slope (newest minus oldest).">Momentum (5) &#8597;</th>
-                        <th onclick="sortTable(12, 'number')">Showdowns &#8597;</th>
+                        <th onclick="sortTable(0, 'number')" title="Rank by total profit"># &#8597;</th>
+                        <th onclick="sortTable(1, 'string')">Player &#8597;</th>
+                        <th onclick="sortTable(2, 'number')">Games &#8597;</th>
+                        <th onclick="sortTable(3, 'number')">Hands &#8597;</th>
+                        <th onclick="sortTable(4, 'number')">Wins &#8597;</th>
+                        <th onclick="sortTable(5, 'number')">Win Rate &#8597;</th>
+                        <th onclick="sortTable(6, 'number')" title="PokerNow VPIP: voluntary money on any street (preflop + postflop)">PN VPIP% &#8597;</th>
+                        <th onclick="sortTable(7, 'number')" title="Conventional VPIP: voluntary money preflop only">VPIP% &#8597;</th>
+                        <th onclick="sortTable(8, 'number')" title="Pre-Flop Raise">PFR% &#8597;</th>
+                        <th onclick="sortTable(9, 'number')" title="Attempt to Steal">ATS% &#8597;</th>
+                        <th onclick="sortTable(10, 'number')">Profit/Loss &#8597;</th>
+                        <th onclick="sortTable(11, 'number')">Avg/Hand &#8597;</th>
+                        <th onclick="sortTable(12, 'momentum')" title="Avg/hand trajectory across the last 5 sessions. Sort by trend slope (newest minus oldest).">Momentum (5) &#8597;</th>
+                        <th onclick="sortTable(13, 'number')">Showdowns &#8597;</th>
                     </tr>
                 </thead>
                 <tbody>{table_rows}
@@ -850,7 +1003,11 @@ def build_html(summary: dict, charts: dict, table_data: list) -> str:
                 var aVal = a.cells[colIdx].textContent.replace(/[+%,]/g, "").trim();
                 var bVal = b.cells[colIdx].textContent.replace(/[+%,]/g, "").trim();
                 if (type === "number") {{
-                    return (parseFloat(aVal) - parseFloat(bVal)) * dir;
+                    var aNum = parseFloat(aVal);
+                    var bNum = parseFloat(bVal);
+                    if (!isFinite(aNum)) aNum = -Infinity;  // "-" cells sort as lowest
+                    if (!isFinite(bNum)) bNum = -Infinity;
+                    return (aNum - bNum) * dir;
                 }}
                 return aVal.localeCompare(bVal) * dir;
             }});
@@ -901,7 +1058,8 @@ def main():
 
     # Step 4: Generate HTML
     print("\n[4/4] Generating HTML dashboard...")
-    html = build_html(summary, charts, table_data)
+    latest_session = get_latest_session_summary(DB_PATH)
+    html = build_html(summary, charts, table_data, latest_session)
 
     output_path = Path(output_dir) / "index.html"
     with open(output_path, "w", encoding="utf-8") as f:
