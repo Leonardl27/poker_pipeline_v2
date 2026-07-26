@@ -25,16 +25,22 @@ from generate_dashboard import (
     DB_PATH, MIN_GAMES,
 )
 from visualize import get_latest_session_summary
+from chart_data import build_chart_data
 
+# Only the architecture diagrams are pre-rendered PNGs; data charts are
+# interactive inline SVG rendered client-side from CHART_DATA.
 EXPECTED_CHARTS = [
-    "player_archetypes.png",
-    "hand_analysis.png",
-    "session_trends.png",
-    "momentum.png",
-    "stat_correlations.png",
-    "profit_drivers.png",
     "pipeline_diagram.png",
     "cicd_diagram.png",
+]
+
+EXPECTED_CHART_DIVS = [
+    "chart-archetypes",
+    "chart-hand-analysis",
+    "chart-session-trends",
+    "chart-momentum",
+    "chart-correlations",
+    "chart-profit-drivers",
 ]
 
 
@@ -115,10 +121,20 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
     print("[5/5] Building and validating HTML...")
     try:
         latest_session = get_latest_session_summary(DB_PATH)
-        html = build_html(summary, charts, table_data, latest_session)
+        chart_data = build_chart_data(DB_PATH, min_games=MIN_GAMES)
+        html = build_html(summary, charts, table_data, latest_session, chart_data)
     except Exception as e:
         errors.append(f"HTML build failed: {e}")
         return errors, warnings
+
+    # Interactive chart checks: payload + container divs + renderer present
+    if "window.CHART_DATA" not in html:
+        errors.append("CHART_DATA payload missing from HTML")
+    for div_id in EXPECTED_CHART_DIVS:
+        if f'id="{div_id}"' not in html:
+            errors.append(f"Missing interactive chart container: {div_id}")
+    if "renderArchetypes" not in html:
+        errors.append("Chart renderer JS (static/charts.js) missing from HTML")
 
     # Check for key sections
     for section_name in ["Latest Session", "Player Leaderboard", "Player Profiles",

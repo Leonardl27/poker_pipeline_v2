@@ -10,6 +10,7 @@ import matplotlib
 matplotlib.use('Agg')  # Must be set before any other matplotlib imports
 
 import base64
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,11 +19,14 @@ from database import get_connection
 from ingest import ingest_directory
 from mappings import load_mappings
 from visualize import (
-    get_player_statistics, generate_all_visualizations,
-    get_recent_session_avg_per_hand, get_latest_session_summary,
+    get_player_statistics, get_recent_session_avg_per_hand,
+    get_latest_session_summary, plot_pipeline_diagram, plot_cicd_diagram,
 )
 from hud_stats import calculate_hud_stats
 from scouting import generate_scouting_report
+from chart_data import build_chart_data
+
+CHART_JS_PATH = Path(__file__).parent / "static" / "charts.js"
 
 DB_PATH = "poker.db"
 RAW_DIR = "raw"
@@ -72,14 +76,20 @@ def run_pipeline(db_path: str = DB_PATH) -> dict:
 
 
 def generate_chart_base64(db_path: str, output_dir: str) -> dict:
-    """Generate all charts and return them as base64-encoded strings."""
-    generate_all_visualizations(db_path, output_dir, min_games=MIN_GAMES)
+    """Generate the architecture diagram PNGs and return them base64-encoded.
+
+    Data charts are no longer pre-rendered here — they are drawn client-side
+    as interactive SVG from the CHART_DATA payload (see chart_data.py and
+    static/charts.js). Only the two static architecture diagrams stay as PNGs.
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    plot_pipeline_diagram(str(out / "pipeline_diagram.png"))
+    plot_cicd_diagram(str(out / "cicd_diagram.png"))
 
     charts = {}
-    for chart_name in ["player_archetypes.png", "hand_analysis.png", "session_trends.png",
-                       "momentum.png", "stat_correlations.png", "profit_drivers.png",
-                       "pipeline_diagram.png", "cicd_diagram.png"]:
-        chart_path = Path(output_dir) / chart_name
+    for chart_name in ["pipeline_diagram.png", "cicd_diagram.png"]:
+        chart_path = out / chart_name
         if chart_path.exists():
             with open(chart_path, "rb") as f:
                 charts[chart_name] = base64.b64encode(f.read()).decode("utf-8")
@@ -392,9 +402,15 @@ def build_latest_session_html(latest: dict) -> str:
 
 
 def build_html(summary: dict, charts: dict, table_data: list,
-               latest_session: dict = None) -> str:
+               latest_session: dict = None, chart_data: dict = None) -> str:
     """Build the complete HTML dashboard as a string."""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    # Interactive chart payload + renderer (inlined — page stays self-contained)
+    chart_data_json = json.dumps(
+        chart_data or {}, separators=(",", ":"), allow_nan=False,
+    ).replace("</", "<\\/")
+    chart_js = CHART_JS_PATH.read_text(encoding="utf-8")
 
     # Build player stats table rows (table_data is already sorted by profit desc)
     table_rows = ""
@@ -430,34 +446,36 @@ def build_html(summary: dict, charts: dict, table_data: list,
     # Build player profiles section
     player_profiles_section = build_player_profiles_html(table_data)
 
-    # Build chart sections
+    # Build interactive chart sections (rendered client-side by static/charts.js)
     chart_sections = ""
     chart_configs = [
-        ("player_archetypes.png", "Player Archetypes",
+        ("chart-archetypes", "Player Archetypes",
          "Where everyone falls on the classic VPIP/PFR style map, split at the group medians. "
-         "Bubble size shows hands played; green means lifetime winner, red means lifetime loser."),
-        ("hand_analysis.png", "Hand Analysis",
+         "Bubble size shows hands played; green means lifetime winner, red means lifetime loser. "
+         "Hover a bubble for full stats."),
+        ("chart-hand-analysis", "Hand Analysis",
          "Distribution of winning hand types and action frequency across all sessions."),
-        ("session_trends.png", "Session Trends",
+        ("chart-session-trends", "Session Trends",
          "Top chart tracks cumulative profit/loss for the 3 biggest winners and 2 biggest losers. "
-         "Bottom heatmap shows every player\u2019s profit/loss per session at a glance."),
-        ("momentum.png", "Player Momentum",
+         "Bottom heatmap shows every player\u2019s profit/loss per session at a glance. "
+         "Hover any point or cell for details."),
+        ("chart-momentum", "Player Momentum",
          "Individual per-session profit/loss for each player. Green bars = winning sessions, "
          "red bars = losing sessions. \u2191/\u2193 arrows indicate recent trend direction."),
-        ("stat_correlations.png", "Stat Correlations",
+        ("chart-correlations", "Stat Correlations",
          "Pearson correlation matrix between all HUD stats and total profit. "
          "Green indicates positive correlation, red indicates negative."),
-        ("profit_drivers.png", "Profit Drivers",
+        ("chart-profit-drivers", "Profit Drivers",
          "Regression analysis showing which HUD stats most strongly predict profit. "
-         "Each panel shows scatter plot with best-fit line, R\u00b2, and p-value."),
+         "Each panel shows a scatter plot with best-fit line, R\u00b2, and p-value. "
+         "Hover a point to see who it is."),
     ]
-    for filename, title, description in chart_configs:
-        if filename in charts:
-            chart_sections += f"""
+    for div_id, title, description in chart_configs:
+        chart_sections += f"""
         <section class="chart-section">
             <h2>{title}</h2>
             <p class="chart-description">{description}</p>
-            <img src="data:image/png;base64,{charts[filename]}" alt="{title}" />
+            <div class="ichart" id="{div_id}"></div>
         </section>"""
 
     # Side-by-side architecture diagrams
@@ -724,6 +742,70 @@ def build_html(summary: dict, charts: dict, table_data: list,
             border-radius: 8px;
             border: 1px solid #0f3460;
         }}
+        .ichart svg {{
+            width: 100%;
+            height: auto;
+            display: block;
+            background: #1a1a2e;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+        }}
+        .ichart svg text {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }}
+        .chart-flex {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }}
+        .momentum-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 12px;
+        }}
+        .momentum-chart {{
+            background: #16213e;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            padding: 10px 12px;
+        }}
+        .momentum-chart h5 {{
+            color: #eee;
+            font-size: 0.85rem;
+            margin: 0 0 6px;
+        }}
+        .momentum-chart h5 .up {{
+            color: #4caf50;
+        }}
+        .momentum-chart h5 .down {{
+            color: #e94560;
+        }}
+        .momentum-chart svg {{
+            border: none;
+            background: transparent;
+        }}
+        .chart-tip {{
+            position: absolute;
+            z-index: 50;
+            background: #16213e;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            padding: 8px 10px;
+            color: #eee;
+            font-size: 0.82rem;
+            line-height: 1.45;
+            pointer-events: none;
+            max-width: 280px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+        }}
+        .chart-tip .pos {{
+            color: #4caf50;
+            font-weight: bold;
+        }}
+        .chart-tip .neg {{
+            color: #e94560;
+            font-weight: bold;
+        }}
         .diagram-pair {{
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -913,6 +995,9 @@ def build_html(summary: dict, charts: dict, table_data: list,
             .diagram-pair {{
                 grid-template-columns: 1fr;
             }}
+            .chart-flex {{
+                grid-template-columns: 1fr;
+            }}
         }}
     </style>
 </head>
@@ -1026,6 +1111,10 @@ def build_html(summary: dict, charts: dict, table_data: list,
             }}
         }}
     </script>
+    <script>
+    window.CHART_DATA = {chart_data_json};
+    {chart_js}
+    </script>
 </body>
 </html>"""
 
@@ -1046,10 +1135,11 @@ def main():
     print(f"  Ingested {summary['files_ingested']} files")
     print(f"  {summary['total_hands']} hands, {summary['total_players']} players")
 
-    # Step 2: Generate charts as base64
-    print("\n[2/4] Generating charts...")
+    # Step 2: Generate diagram PNGs + interactive chart data
+    print("\n[2/4] Generating diagrams and chart data...")
     charts = generate_chart_base64(DB_PATH, output_dir)
-    print(f"  Generated {len(charts)} charts")
+    chart_data = build_chart_data(DB_PATH, min_games=MIN_GAMES)
+    print(f"  Generated {len(charts)} diagrams + interactive chart payload")
 
     # Step 3: Get table data
     print("\n[3/4] Building player leaderboard...")
@@ -1059,7 +1149,7 @@ def main():
     # Step 4: Generate HTML
     print("\n[4/4] Generating HTML dashboard...")
     latest_session = get_latest_session_summary(DB_PATH)
-    html = build_html(summary, charts, table_data, latest_session)
+    html = build_html(summary, charts, table_data, latest_session, chart_data)
 
     output_path = Path(output_dir) / "index.html"
     with open(output_path, "w", encoding="utf-8") as f:

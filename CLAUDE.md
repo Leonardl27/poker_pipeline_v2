@@ -1,7 +1,7 @@
 # CLAUDE.md — Poker Pipeline V2
 
 ## Project Overview
-Python ELT pipeline: JSON poker replay files -> SQLite -> Matplotlib charts -> self-contained HTML dashboard -> GitHub Pages.
+Python ELT pipeline: JSON poker replay files -> SQLite -> interactive SVG charts -> self-contained HTML dashboard -> GitHub Pages.
 
 ## Key Commands
 ```bash
@@ -14,14 +14,22 @@ python main.py unmapped              # List unmapped players
 
 ## Architecture
 - SQLite DB is rebuilt from scratch on every run (no migrations needed)
-- Charts are PNGs saved to `_site/`, then base64-embedded into `index.html`
-- Dashboard is a single self-contained HTML file (no external JS/CSS)
+- Data charts are interactive inline SVG, rendered client-side by
+  `static/charts.js` (inlined into `index.html` at build time) from the
+  `CHART_DATA` JSON payload built by `chart_data.py`
+- Architecture diagrams (pipeline/CI-CD) are matplotlib PNGs base64-embedded
+  into `index.html`; the matplotlib data-chart functions in `visualize.py`
+  remain for CLI use (`main.py`) only
+- Dashboard is a single self-contained HTML file (no external requests)
 
 ## Adding a New Chart
-1. Add query function + plot function in `visualize.py`
-2. Register in `generate_all_visualizations()`
-3. Add filename to `generate_chart_base64()` in `generate_dashboard.py`
-4. Add tuple to `chart_configs` in `build_html()`
+1. Add a data builder function in `chart_data.py` and register it in
+   `build_chart_data()` (plain Python types only — None for missing, no NaN)
+2. Add a `render*` function in `static/charts.js` and a `go(...)` call in
+   its bootstrap block
+3. Add a `(div_id, title, description)` tuple to `chart_configs` in
+   `build_html()` in `generate_dashboard.py`
+4. Add the div id to `EXPECTED_CHART_DIVS` in `verify_dashboard.py`
 
 ## Adding a New HUD Stat
 1. Add accumulator keys in `calculate_hud_stats()` defaultdict in `hud_stats.py`
@@ -51,11 +59,13 @@ Verification must pass for deploy to proceed.
 Bot comment shows pass/fail status with validation details.
 Human must review the preview and approve before merge.
 
-### Recommended Branch Protection (GitHub Settings > Branches > main)
-- Require a pull request before merging
-- Require 1 approval
-- Require status checks to pass (`build-preview`)
+### Branch Protection (applied on main via GitHub API, 2026-07-25)
+- Require a pull request before merging (no direct pushes)
+- Require the `build-preview` status check to pass
 - Require branches to be up to date before merging
+- Force pushes and branch deletion blocked
+- 0 required approvals (solo repo — GitHub blocks self-approval, so requiring
+  1 approval would make merging impossible); admins can bypass in a pinch
 
 ## Dashboard Theme
 - Background: #1a1a2e
