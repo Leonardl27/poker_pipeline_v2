@@ -84,8 +84,17 @@ def _hand_analysis_data(db_path: str) -> dict:
     return {"hands": hands, "actions": actions}
 
 
-def _session_trends_data(db_path: str, min_games: int) -> dict:
-    rows = get_per_session_stats(db_path, use_enriched=True, min_games=min_games)
+def _keep(rows, active_names):
+    """Drop rows for players outside the active set (None = keep all)."""
+    if active_names is None:
+        return list(rows)
+    return [r for r in rows if r["name"] in active_names]
+
+
+def _session_trends_data(db_path: str, min_games: int,
+                         active_names: set = None) -> dict:
+    rows = _keep(get_per_session_stats(db_path, use_enriched=True,
+                                       min_games=min_games), active_names)
     if not rows:
         return {"labels": [], "featured": [], "names": [], "matrix": []}
 
@@ -145,8 +154,10 @@ def _session_trends_data(db_path: str, min_games: int) -> dict:
             "names": names, "matrix": matrix}
 
 
-def _momentum_data(db_path: str, min_games: int) -> dict:
-    rows = get_per_session_stats(db_path, use_enriched=True, min_games=min_games)
+def _momentum_data(db_path: str, min_games: int,
+                   active_names: set = None) -> dict:
+    rows = _keep(get_per_session_stats(db_path, use_enriched=True,
+                                       min_games=min_games), active_names)
     player_sessions: dict = defaultdict(list)
     player_names: dict = {}
     for row in rows:
@@ -177,11 +188,12 @@ def _momentum_data(db_path: str, min_games: int) -> dict:
     return {"players": players}
 
 
-def _eligible_hud(db_path: str, min_games: int) -> list:
+def _eligible_hud(db_path: str, min_games: int,
+                  active_names: set = None) -> list:
     hud = calculate_hud_stats(db_path)
     eligible = {r["name"] for r in
-                get_player_statistics(db_path, use_enriched=True,
-                                      min_games=min_games)}
+                _keep(get_player_statistics(db_path, use_enriched=True,
+                                            min_games=min_games), active_names)}
     return [h for h in hud if h["name"] in eligible]
 
 
@@ -245,18 +257,24 @@ def _profit_drivers_data(hud: list) -> dict:
     return {"panels": panels}
 
 
-def build_chart_data(db_path: str = "poker.db", min_games: int = 3) -> dict:
-    """Build the full CHART_DATA payload for the interactive dashboard."""
-    stats = get_player_statistics(db_path, use_enriched=True,
-                                  min_games=min_games)
+def build_chart_data(db_path: str = "poker.db", min_games: int = 3,
+                     active_names: set = None) -> dict:
+    """Build the full CHART_DATA payload for the interactive dashboard.
+
+    active_names: if given, player-level charts only include these players
+    (e.g. people who played in the last year). Session columns and the
+    hand/action distributions still cover the full history.
+    """
+    stats = _keep(get_player_statistics(db_path, use_enriched=True,
+                                        min_games=min_games), active_names)
     hud_by_name = {h["name"]: h for h in calculate_hud_stats(db_path)}
-    hud_eligible = _eligible_hud(db_path, min_games)
+    hud_eligible = _eligible_hud(db_path, min_games, active_names)
 
     return {
         "archetypes": _archetype_data(hud_by_name, stats),
         "hand_analysis": _hand_analysis_data(db_path),
-        "session_trends": _session_trends_data(db_path, min_games),
-        "momentum": _momentum_data(db_path, min_games),
+        "session_trends": _session_trends_data(db_path, min_games, active_names),
+        "momentum": _momentum_data(db_path, min_games, active_names),
         "correlations": (_correlations_data(hud_eligible)
                          if len(hud_eligible) >= 3 else None),
         "profit_drivers": (_profit_drivers_data(hud_eligible)

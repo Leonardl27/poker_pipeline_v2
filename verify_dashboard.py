@@ -22,9 +22,9 @@ matplotlib.use('Agg')
 
 from generate_dashboard import (
     run_pipeline, generate_chart_base64, get_table_data, build_html,
-    DB_PATH, MIN_GAMES,
+    get_activity, get_past_players, DB_PATH, MIN_GAMES, ACTIVE_WINDOW_DAYS,
 )
-from visualize import get_latest_session_summary
+from visualize import get_latest_session_summary, get_session_records
 from chart_data import build_chart_data
 
 # Only the architecture diagrams are pre-rendered PNGs; data charts are
@@ -59,9 +59,18 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
         summary = run_pipeline(DB_PATH)
         print(f"      Ingested {summary['files_ingested']} files, "
               f"{summary['total_hands']} hands, {summary['total_players']} players")
+        activity_info = get_activity(DB_PATH)
+        active_names = activity_info["active_names"]
+        past_players = get_past_players(activity_info)
+        print(f"      {len(active_names)} active in last {ACTIVE_WINDOW_DAYS} days, "
+              f"{len(past_players)} past players")
     except Exception as e:
         errors.append(f"Pipeline failed: {e}")
         return errors, warnings
+
+    # History must be kept: every player in the DB is either active or past
+    if len(active_names) + len(past_players) != len(activity_info["activity"]):
+        errors.append("Activity split lost players (active + past != all players)")
 
     # ── Step 2: Generate charts ───────────────────────────────────────
     print("[2/5] Generating charts...")
@@ -79,7 +88,7 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
     # ── Step 3: Get table data ────────────────────────────────────────
     print("[3/5] Building table data...")
     try:
-        table_data = get_table_data(DB_PATH)
+        table_data = get_table_data(DB_PATH, active_names)
     except Exception as e:
         errors.append(f"Table data generation failed: {e}")
         return errors, warnings
@@ -88,6 +97,13 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
         errors.append("No players in leaderboard (table_data is empty)")
     else:
         print(f"      {len(table_data)} players in leaderboard")
+
+    # Activity filter: nobody outside the window may appear on the leaderboard
+    cutoff_ms = activity_info["cutoff_ms"]
+    for row in table_data:
+        if row["name"] not in active_names or (row.get("last_played_ms") or 0) < cutoff_ms:
+            errors.append(f"{row['name']}: on leaderboard but inactive for "
+                          f"more than {ACTIVE_WINDOW_DAYS} days")
 
     # ── Step 4: Stat sanity checks ────────────────────────────────────
     print("[4/5] Validating stats...")
@@ -121,8 +137,12 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
     print("[5/5] Building and validating HTML...")
     try:
         latest_session = get_latest_session_summary(DB_PATH)
-        chart_data = build_chart_data(DB_PATH, min_games=MIN_GAMES)
-        html = build_html(summary, charts, table_data, latest_session, chart_data)
+        chart_data = build_chart_data(DB_PATH, min_games=MIN_GAMES,
+                                      active_names=active_names)
+        records = get_session_records(DB_PATH, active_names)
+        html = build_html(summary, charts, table_data, latest_session, chart_data,
+                          past_players=past_players, records=records,
+                          now_ms=activity_info["now_ms"])
     except Exception as e:
         errors.append(f"HTML build failed: {e}")
         return errors, warnings
@@ -136,9 +156,20 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
     if "renderArchetypes" not in html:
         errors.append("Chart renderer JS (static/charts.js) missing from HTML")
 
+    # Charts must only feature active players
+    chart_names = set()
+    chart_names.update(p["name"] for p in chart_data["archetypes"]["players"])
+    chart_names.update(chart_data["session_trends"]["names"])
+    chart_names.update(p["name"] for p in chart_data["momentum"]["players"])
+    for name in sorted(chart_names - active_names):
+        errors.append(f"Inactive player '{name}' appears in chart data")
+
     # Check for key sections
-    for section_name in ["Latest Session", "Player Leaderboard", "Player Profiles",
-                         "Scouting Report"]:
+    sections = ["Latest Session", "Player Leaderboard", "Player Profiles",
+                "Scouting Report"]
+    if past_players:
+        sections.append("Past Players")
+    for section_name in sections:
         if section_name not in html:
             errors.append(f"Missing '{section_name}' section in HTML")
 
