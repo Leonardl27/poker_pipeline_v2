@@ -61,6 +61,20 @@ weight (x1.5 when also worse than the table median), max one per area, and
 stats need `MIN_SAMPLE` opportunities. Copy lives in `LEAK_TEXT` /
 `STRENGTH_TEXT`. Sample counts come from `row["samples"]` in `get_table_data()`.
 
+## Starting Hands Panel
+`starting_hands.py` powers the 13x13 grid in each profile. Hole cards are
+only known for the replay owner's hands, showdowns, and hands shown for fun,
+so the sample is biased for most players:
+- Cross-player comparison uses only hands turned face up (SHOW_CARDS) at
+  showdown (`showdown_avg_pct`); the owner's mucked showdown hands are
+  excluded so they're treated like everyone else.
+- The play-vs-fold grid and fold metrics appear only when
+  >= `FULL_FOLD_COVERAGE` of a player's folds are visible ("full" mode);
+  otherwise the grid lights only hands seen played ("limited" mode).
+- `HAND_EQUITY` is all-in equity vs. a random hand (seeded 40k-trial Monte
+  Carlo with eval7, run once and committed); `HAND_PERCENTILE` is the
+  combo-weighted "top X%" rank derived from it.
+
 ## Adding a New HUD Stat
 1. Add accumulator keys in `calculate_hud_stats()` defaultdict in `hud_stats.py`
 2. Add computation logic in the per-hand loop

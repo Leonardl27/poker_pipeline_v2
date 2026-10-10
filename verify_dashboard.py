@@ -26,6 +26,7 @@ from generate_dashboard import (
     HIDE_LOSSES_OVER,
 )
 from visualize import get_latest_session_summary, get_session_records
+from starting_hands import FULL_FOLD_COVERAGE
 from chart_data import build_chart_data
 
 # Only the architecture diagrams are pre-rendered PNGs; data charts are
@@ -221,6 +222,20 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
             errors.append(f"'How to improve' #{i+1} is empty")
         if block.count("Try this:") != leaks:
             errors.append(f"'How to improve' #{i+1}: every leak needs a 'Try this' tip")
+
+    # Starting hands panel: one per profile, each a full 13x13 grid, and the
+    # play-vs-fold view only where most folds are actually visible
+    panels = re.findall(r'<div class="hands-panel" data-mode="(\w+)">(.*?)<h4 class="breakdown-title">',
+                        html_no_base64, re.DOTALL)
+    if len(panels) != len(table_data):
+        errors.append(f"Expected {len(table_data)} starting-hands panels, found {len(panels)}")
+    for i, (mode, body) in enumerate(panels):
+        cells = len(re.findall(r'<span class="hc[ "]', body))
+        if cells != 169:
+            errors.append(f"Starting-hands grid #{i+1} has {cells} cells (expected 169)")
+        m = re.search(r'Folds we can see</span>.*?<span>(\d+)%</span>', body, re.DOTALL)
+        if mode == "full" and m and int(m.group(1)) < FULL_FOLD_COVERAGE * 100:
+            errors.append(f"Starting-hands grid #{i+1} uses fold data with only {m.group(1)}% folds visible")
 
     # Hidden amounts: players who lost more than HIDE_LOSSES_OVER must have
     # no dollar figure anywhere (rendered text, chart payload or page source)
