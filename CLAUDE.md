@@ -12,6 +12,10 @@ python main.py stats                 # Print database summary
 python main.py unmapped              # List unmapped players
 ```
 
+## Agent Workflows
+- Adding a new poker session (new replay in `raw/`): follow
+  `.agents/skills/add-poker-session/SKILL.md`
+
 ## Architecture
 - SQLite DB is rebuilt from scratch on every run (no migrations needed)
 - Data charts are interactive inline SVG, rendered client-side by
