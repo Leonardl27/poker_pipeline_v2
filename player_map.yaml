@@ -39,6 +39,8 @@ canonical_players:
     aliases:
       - id: "kOZ_JaFqjv"
         nickname: "Marsh"
+      - id: "T5nw6eMGXI"
+        nickname: "Marsh"
 
   - id: 3
     name: "Jake Joraanstad"
@@ -203,6 +205,10 @@ canonical_players:
         nickname: "Kevdoodle"
       - id: "4HiZJGv1Zm"
         nickname: "Kevdoodle v2"
+      - id: "4HiZJGv1Zm"
+        nickname: "Kev Dog"
+      - id: "4HiZJGv1Zm"
+        nickname: "Kev Dog v2.0"
       - id: "X0oOirQ0_D"
         nickname: "Kevin"
 
@@ -230,6 +236,8 @@ canonical_players:
       - id: "a84xgZZ7Yr"
         nickname: "Steel"
       - id: "72QaAdnCup"
+        nickname: "Steel"
+      - id: "H7tbiUTDgv"
         nickname: "Steel"
 
   - id: 14
