@@ -29,6 +29,10 @@ from visualize import (
 from hud_stats import calculate_hud_stats
 from scouting import generate_scouting_report
 from coaching import generate_coaching, table_medians, leak_gauge
+from starting_hands import (
+    build_starting_hands, grid_keys, HAND_PERCENTILE, TOP_PCT, JUNK_PCT,
+    FULL_FOLD_COVERAGE,
+)
 from chart_data import build_chart_data
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -465,7 +469,126 @@ def build_coaching_html(row: dict, medians: dict) -> str:
                     </div>'''
 
 
-def build_player_profiles_html(table_data: list, now_ms: Optional[int] = None) -> str:
+def _mix(c1: tuple, c2: tuple, t: float) -> str:
+    t = max(0.0, min(1.0, t))
+    return "#%02x%02x%02x" % tuple(round(a + (b - a) * t) for a, b in zip(c1, c2))
+
+
+_FOLD_RGB = (34, 48, 84)      # always folded
+_PLAY_RGB = (233, 169, 69)    # always played (gold)
+
+
+def build_starting_hands_html(name: str, sh: Optional[dict], table: dict) -> str:
+    """'Starting hands' panel: 13x13 grid + coverage + strength metrics.
+
+    Full mode (most folds visible): each cell is colored by how often they
+    played that hand vs. folded it. Limited mode: only hands we've seen them
+    play are lit, since their folds are mostly hidden. No dollar amounts.
+    """
+    if not sh:
+        return ""
+    first = esc(name.split()[0])
+    full, cells = sh["full"], sh["cells"]
+    max_seen = max((c["played"] for c in cells.values()), default=1) or 1
+
+    grid = ""
+    for row in grid_keys():
+        for key in row:
+            c = cells.get(key, {"played": 0, "folded": 0})
+            p, f = c["played"], c["folded"]
+            strong = " strong" if HAND_PERCENTILE[key] <= TOP_PCT else ""
+            if full and p + f:
+                rate = p / (p + f)
+                bg = _mix(_FOLD_RGB, _PLAY_RGB, rate)
+                tip = f"{key}: played {p} of {p + f} times we saw it"
+                dark = rate > 0.55
+            elif not full and p:
+                t = (p / max_seen) ** 0.5
+                bg = _mix(_FOLD_RGB, _PLAY_RGB, 0.25 + 0.75 * t)
+                tip = f"{key}: seen played {p} time{'s' if p != 1 else ''}"
+                dark = t > 0.45
+            else:
+                bg, tip, dark = "", f"{key}: not seen", False
+            style = f' style="background:{bg}"' if bg else ""
+            cls = f"hc{strong}{' lit' if bg else ''}{' ink' if dark else ''}"
+            grid += f'<span class="{cls}"{style} title="{tip}">{key}</span>'
+
+    # Coverage meter
+    coverage = f'''
+                            <div class="hands-coverage">
+                                <div class="cov-row"><span>Hands played we can see</span><span class="cov-bar"><span style="width:{sh['played_coverage']}%"></span></span><span>{sh['played_coverage']}%</span></div>
+                                <div class="cov-row"><span>Folds we can see</span><span class="cov-bar"><span style="width:{sh['folded_coverage']}%"></span></span><span>{sh['folded_coverage']}%</span></div>
+                            </div>'''
+
+    facts = []
+    sd, tsd = sh.get("showdown_avg_pct"), table.get("showdown_avg_pct")
+    if sd is not None:
+        if tsd is not None and sd < tsd - 2:
+            cmp = f"stronger than the table median (top {tsd}%)"
+        elif tsd is not None and sd > tsd + 2:
+            cmp = f"weaker than the table median (top {tsd}%)"
+        else:
+            cmp = f"about the table median (top {tsd}%)"
+        facts.append(("At showdown", f"top {sd}%",
+                      f"Average starting hand across {sh['showdown_seen']} hands shown at showdown, {cmp}. "
+                      "This is the fair comparison: everyone has to show here."))
+    if full:
+        if sh["avg_played_pct"] is not None:
+            facts.append(("Every hand played", f"top {sh['avg_played_pct']}%",
+                          f"Average starting hand across all {sh['seen_played']:,} hands we saw {first} play."))
+        if sh["weak_fold_rate"] is not None:
+            facts.append(("Weak hands folded", f"{sh['weak_fold_rate']}%",
+                          f"Of the bottom-half hands {first} was dealt. Disciplined players fold most of these."))
+        if sh["strong_play_rate"] is not None:
+            facts.append(("Strong hands played", f"{sh['strong_play_rate']}%",
+                          f"Of top-{TOP_PCT}% hands dealt. Folding these gives away value."))
+    facts_html = "".join(
+        f'<div class="hfact"><div class="hfact-label">{label}</div>'
+        f'<div class="hfact-value">{value}</div><div class="hfact-note">{note}</div></div>'
+        for label, value, note in facts
+    )
+
+    if not sh["enough"]:
+        mode_note = (f"Not enough of {first}'s hands have been shown yet. The grid fills in "
+                     f"as more hands reach showdown or get shown for fun.")
+    elif full:
+        mode_note = (f"We can see most of {first}'s folds, so each square shows how often "
+                     f"{first} played that hand when dealt it.")
+    else:
+        mode_note = (f"Most of {first}'s folds stay hidden, so the grid only lights up hands we've "
+                     f"seen {first} play (mostly showdowns and hands shown for fun). That leans "
+                     f"toward stronger hands, so compare players using the showdown figure.")
+
+    if full:
+        legend = ('<span class="lg-scale"><span class="lg-chip" style="background:%s"></span>Always folded'
+                  '<span class="lg-grad"></span><span class="lg-chip" style="background:%s"></span>Always played</span>'
+                  % (_mix(_FOLD_RGB, _PLAY_RGB, 0), _mix(_FOLD_RGB, _PLAY_RGB, 1)))
+    else:
+        legend = ('<span class="lg-scale"><span class="lg-chip" style="background:%s"></span>Seen played'
+                  '<span class="lg-grad"></span><span class="lg-chip" style="background:%s"></span>Seen often</span>'
+                  % (_mix(_FOLD_RGB, _PLAY_RGB, 0.25), _mix(_FOLD_RGB, _PLAY_RGB, 1)))
+    legend += '<span><span class="lg-strong"></span>Top 20% of starting hands</span>'
+
+    return f'''
+                    <div class="hands-panel" data-mode="{'full' if full else ('limited' if sh['enough'] else 'thin')}">
+                        <h4>Starting hands</h4>
+                        <p class="hands-lede">{mode_note}</p>
+                        <div class="hands-layout">
+                            <div>
+                                <div class="hand-grid" aria-label="Starting hand grid for {esc(name)}">{grid}</div>
+                                <div class="hands-legend">{legend}</div>
+                                <p class="grid-key">Pairs run down the diagonal, suited hands sit above it and offsuit hands below.</p>
+                            </div>
+                            <div class="hands-side">
+                                {coverage}
+                                <div class="hfacts">{facts_html}</div>
+                            </div>
+                        </div>
+                    </div>'''
+
+
+def build_player_profiles_html(table_data: list, now_ms: Optional[int] = None,
+                               starting_hands: Optional[dict] = None) -> str:
     """Generate collapsible player profile cards."""
     now_ms = now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
     medians = table_medians(table_data)
@@ -561,6 +684,7 @@ def build_player_profiles_html(table_data: list, now_ms: Optional[int] = None) -
                 </button>
                 <div class="profile-body" id="profile-body-{slug}">
                     {build_coaching_html(row, medians)}
+                    {build_starting_hands_html(name, (starting_hands or {}).get(name), (starting_hands or {}).get("_table", {}))}
                     <h4 class="breakdown-title">Full stat breakdown</h4>
                     <div class="profile-stats-grid">
                         <div class="stat-category">
@@ -842,7 +966,8 @@ def build_past_players_html(past_players: Optional[list], window_days: int) -> s
 def build_html(summary: dict, charts: dict, table_data: list,
                latest_session: dict = None, chart_data: dict = None,
                past_players: Optional[list] = None, records: Optional[dict] = None,
-               now_ms: Optional[int] = None, private_names: Optional[set] = None) -> str:
+               now_ms: Optional[int] = None, private_names: Optional[set] = None,
+               starting_hands: Optional[dict] = None) -> str:
     """Build the complete HTML dashboard as a string."""
     now = datetime.now(timezone.utc)
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -861,7 +986,9 @@ def build_html(summary: dict, charts: dict, table_data: list,
         private_names = {r["name"] for r in table_data if r.get("private")}
         private_names |= {p["name"] for p in (past_players or []) if p.get("private")}
     leaderboard_section = build_leaderboard_html(table_data, now_ms)
-    player_profiles_section = build_player_profiles_html(table_data, now_ms)
+    if starting_hands is None:
+        starting_hands = build_starting_hands(DB_PATH, [r["name"] for r in table_data])
+    player_profiles_section = build_player_profiles_html(table_data, now_ms, starting_hands)
     past_section = build_past_players_html(past_players, ACTIVE_WINDOW_DAYS)
 
     # Build interactive chart sections (rendered client-side by static/charts.js)
