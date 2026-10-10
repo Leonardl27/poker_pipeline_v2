@@ -209,6 +209,8 @@ canonical_players:
         nickname: "Kev Dog"
       - id: "4HiZJGv1Zm"
         nickname: "Kev Dog v2.0"
+      - id: "4HiZJGv1Zm"
+        nickname: "kevbot"
       - id: "X0oOirQ0_D"
         nickname: "Kevin"
 
@@ -313,6 +315,8 @@ canonical_players:
         nickname: "BlitzRyan"
       - id: "VJU-hGD3L_"
         nickname: "BlitzRyan"
+      - id: "VJU-hGD3L_"
+        nickname: "Ryan"
 
   - id: 23
     name: "Justin Coffman"
@@ -325,6 +329,8 @@ canonical_players:
         nickname: "Dayman"
       - id: "oJNWU-jnlA"
         nickname: "SMOKEY"
+      - id: "oJNWU-jnlA"
+        nickname: "smokey"
 
   - id: 24
     name: "Ross Sigler"
