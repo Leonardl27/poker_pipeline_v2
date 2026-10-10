@@ -198,6 +198,25 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
                 f"Scouting report #{i+1} has {bullet_count} bullets (expected 2-4)"
             )
 
+    # Improvement advice: one "How to improve" block per player, each with
+    # at most 3 leak cards (or the no-leaks message) and a "Try this" per leak
+    coaching_blocks = re.findall(
+        r'<div class="coaching">(.*?)<h4 class="breakdown-title">',
+        html_no_base64, re.DOTALL,
+    )
+    if len(coaching_blocks) != len(table_data):
+        errors.append(
+            f"Expected {len(table_data)} 'How to improve' sections, found {len(coaching_blocks)}"
+        )
+    for i, block in enumerate(coaching_blocks):
+        leaks = block.count('<article class="leak">')
+        if leaks > 3:
+            errors.append(f"'How to improve' #{i+1} has {leaks} leaks (max 3)")
+        if leaks == 0 and 'class="leak-none"' not in block:
+            errors.append(f"'How to improve' #{i+1} is empty")
+        if block.count("Try this:") != leaks:
+            errors.append(f"'How to improve' #{i+1}: every leak needs a 'Try this' tip")
+
     # Write the HTML
     output_path = Path(output_dir) / "index.html"
     with open(output_path, "w", encoding="utf-8") as f:
