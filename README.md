@@ -223,6 +223,7 @@ Maps screen name aliases to real player identities. See [Player Identity Mapping
 | `OUTPUT_DIR` | `_site` | Dashboard output directory |
 | `MIN_GAMES` | `3` | Minimum sessions for a player to appear on dashboard |
 | `ACTIVE_WINDOW_DAYS` | `365` | Players with no session in this many days move to "Past Players" (data kept) |
+| `HIDE_LOSSES_OVER` | `400` | Players whose lifetime loss exceeds this keep their rank/stats but no dollar amounts are shown |
 
 ## Architecture Decisions
 

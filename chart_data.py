@@ -37,18 +37,21 @@ HAND_RANKING = [
 ]
 
 
-def _archetype_data(hud_by_name: dict, stats: list) -> dict:
+def _archetype_data(hud_by_name: dict, stats: list, private_names: set) -> dict:
     players = []
     for row in stats:
         h = hud_by_name.get(row["name"])
         if not h:
             continue
+        private = row["name"] in private_names
         players.append({
             "name": row["name"],
             "vpip": round(h["conv_vpip_pct"], 1),
             "pfr": round(h["pfr_pct"], 1),
             "hands": row["hands_played"],
-            "profit": round(row["total_profit"] or 0, 2),
+            # Hidden amount: no profit number, just a winner/loser flag
+            "profit": None if private else round(row["total_profit"] or 0, 2),
+            "winner": (row["total_profit"] or 0) >= 0,
         })
     if not players:
         return {"players": [], "vpip_median": 0, "pfr_median": 0}
@@ -92,7 +95,8 @@ def _keep(rows, active_names):
 
 
 def _session_trends_data(db_path: str, min_games: int,
-                         active_names: set = None) -> dict:
+                         active_names: set = None,
+                         private_names: set = frozenset()) -> dict:
     rows = _keep(get_per_session_stats(db_path, use_enriched=True,
                                        min_games=min_games), active_names)
     if not rows:
@@ -123,9 +127,11 @@ def _session_trends_data(db_path: str, min_games: int,
         reverse=True,
     )
 
-    # Featured: top 3 winners + bottom 2 losers, cumulative P/L points
-    top3 = sorted_players[:3]
-    bottom2 = sorted_players[-2:] if len(sorted_players) > 3 else []
+    # Featured: top 3 winners + bottom 2 losers, cumulative P/L points.
+    # Players with hidden amounts are never featured (the $ axis would show them).
+    visible = [kv for kv in sorted_players if player_names[kv[0]] not in private_names]
+    top3 = visible[:3]
+    bottom2 = visible[-2:] if len(visible) > 3 else []
     featured_ids = list(dict.fromkeys(
         [pid for pid, _ in top3] + [pid for pid, _ in bottom2]))
 
@@ -143,10 +149,13 @@ def _session_trends_data(db_path: str, min_games: int,
 
     # Heatmap matrix: players (profit desc) x sessions, None where absent
     names = [player_names[pid] for pid, _ in sorted_players]
+    # Heatmap cells: number, None (absent), or "played" for hidden amounts
     matrix = []
     for pid, profit_map in sorted_players:
+        private = player_names[pid] in private_names
         matrix.append([
-            round(profit_map[gid], 2) if gid in profit_map else None
+            ("played" if private else round(profit_map[gid], 2))
+            if gid in profit_map else None
             for gid in global_sessions
         ])
 
@@ -155,9 +164,12 @@ def _session_trends_data(db_path: str, min_games: int,
 
 
 def _momentum_data(db_path: str, min_games: int,
-                   active_names: set = None) -> dict:
-    rows = _keep(get_per_session_stats(db_path, use_enriched=True,
-                                       min_games=min_games), active_names)
+                   active_names: set = None,
+                   private_names: set = frozenset()) -> dict:
+    # Bars share one $ scale, so hidden-amount players are left out entirely
+    rows = [r for r in _keep(get_per_session_stats(db_path, use_enriched=True,
+                                                   min_games=min_games), active_names)
+            if r["name"] not in private_names]
     player_sessions: dict = defaultdict(list)
     player_names: dict = {}
     for row in rows:
@@ -224,7 +236,7 @@ def _correlations_data(hud: list) -> dict:
     return {"labels": [label for _, label in keys], "matrix": corr}
 
 
-def _profit_drivers_data(hud: list) -> dict:
+def _profit_drivers_data(hud: list, private_names: set = frozenset()) -> dict:
     import numpy as np
     from scipy import stats as sp_stats
 
@@ -245,10 +257,12 @@ def _profit_drivers_data(hud: list) -> dict:
 
     panels = []
     for abs_r, key, label, points, xs, ys in correlations[:4]:
+        # Fit uses everyone; hidden-amount players just aren't plotted on the $ axis
         reg = sp_stats.linregress(xs, ys)
         panels.append({
             "label": label,
-            "points": points,
+            "points": [p for p in points if p["name"] not in private_names],
+            "hidden": sum(1 for p in points if p["name"] in private_names),
             "slope": round(float(reg.slope), 4),
             "intercept": round(float(reg.intercept), 4),
             "r2": round(float(reg.rvalue) ** 2, 3),
@@ -258,25 +272,29 @@ def _profit_drivers_data(hud: list) -> dict:
 
 
 def build_chart_data(db_path: str = "poker.db", min_games: int = 3,
-                     active_names: set = None) -> dict:
+                     active_names: set = None, private_names: set = None) -> dict:
     """Build the full CHART_DATA payload for the interactive dashboard.
 
     active_names: if given, player-level charts only include these players
     (e.g. people who played in the last year). Session columns and the
     hand/action distributions still cover the full history.
+    private_names: players whose dollar amounts must not appear in any chart
+    (see HIDE_LOSSES_OVER in generate_dashboard.py).
     """
+    private_names = set(private_names or ())
     stats = _keep(get_player_statistics(db_path, use_enriched=True,
                                         min_games=min_games), active_names)
     hud_by_name = {h["name"]: h for h in calculate_hud_stats(db_path)}
     hud_eligible = _eligible_hud(db_path, min_games, active_names)
 
     return {
-        "archetypes": _archetype_data(hud_by_name, stats),
+        "archetypes": _archetype_data(hud_by_name, stats, private_names),
         "hand_analysis": _hand_analysis_data(db_path),
-        "session_trends": _session_trends_data(db_path, min_games, active_names),
-        "momentum": _momentum_data(db_path, min_games, active_names),
+        "session_trends": _session_trends_data(db_path, min_games, active_names,
+                                               private_names),
+        "momentum": _momentum_data(db_path, min_games, active_names, private_names),
         "correlations": (_correlations_data(hud_eligible)
                          if len(hud_eligible) >= 3 else None),
-        "profit_drivers": (_profit_drivers_data(hud_eligible)
+        "profit_drivers": (_profit_drivers_data(hud_eligible, private_names)
                            if len(hud_eligible) >= 4 else None),
     }

@@ -333,14 +333,16 @@ def get_active_player_names(activity: dict, cutoff_ms: int) -> set:
 
 
 def get_session_records(db_path: str = "poker.db",
-                        active_names: Optional[set] = None) -> dict:
+                        active_names: Optional[set] = None,
+                        exclude_names: Optional[set] = None) -> dict:
     """All-time fun records for the dashboard 'records' strip.
 
     - best_night / worst_night: biggest single-session win / loss (all players)
     - biggest_pot: largest pot ever awarded
     - hot_streak: longest *current* run of consecutive winning sessions
       among active players (only reported if >= 2)
-    Each value is a dict or None.
+    Each value is a dict or None. Players in exclude_names (whose dollar
+    amounts are hidden on the dashboard) are never chosen for a record.
     """
     conn = get_connection(db_path)
     cursor = conn.cursor()
@@ -374,6 +376,8 @@ def get_session_records(db_path: str = "poker.db",
 
     records = {"best_night": None, "worst_night": None,
                "biggest_pot": None, "hot_streak": None}
+    exclude_names = exclude_names or set()
+    sessions = [r for r in sessions if r["name"] not in exclude_names]
     if sessions:
         best = max(sessions, key=lambda r: r["profit"] or 0)
         worst = min(sessions, key=lambda r: r["profit"] or 0)
