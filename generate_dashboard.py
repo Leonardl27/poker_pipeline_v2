@@ -45,6 +45,11 @@ MIN_GAMES = 3  # Only show players who have played in at least this many session
 # and charts. Their hands stay in the database and still count toward totals;
 # they are listed in the collapsed "Past players" section instead.
 ACTIVE_WINDOW_DAYS = 365
+# Players whose lifetime loss is bigger than this keep their stats and rank,
+# but no dollar amount of theirs is shown anywhere on the dashboard (tables,
+# profiles, the latest-session table, records, chart tooltips/axes, or the
+# page source). See get_private_names().
+HIDE_LOSSES_OVER = 400
 
 
 def run_pipeline(db_path: str = DB_PATH) -> dict:
@@ -105,10 +110,17 @@ def get_activity(db_path: str = DB_PATH, now: Optional[datetime] = None) -> dict
     return {
         "activity": activity,
         "active_names": get_active_player_names(activity, cutoff_ms),
+        "private_names": get_private_names(activity),
         "cutoff_ms": cutoff_ms,
         "now_ms": int(now.timestamp() * 1000),
         "window_days": ACTIVE_WINDOW_DAYS,
     }
+
+
+def get_private_names(activity: dict) -> set:
+    """Players whose lifetime loss exceeds HIDE_LOSSES_OVER (amounts hidden)."""
+    return {name for name, a in activity.items()
+            if (a.get("profit") or 0) < -HIDE_LOSSES_OVER}
 
 
 def get_past_players(activity_info: dict) -> list:
@@ -119,6 +131,8 @@ def get_past_players(activity_info: dict) -> list:
         for name, a in activity_info["activity"].items()
         if name not in active
     ]
+    for r in rows:
+        r["private"] = r["name"] in activity_info["private_names"]
     rows.sort(key=lambda r: r["last_played_ms"] or 0, reverse=True)
     return rows
 
@@ -154,6 +168,7 @@ def get_table_data(db_path: str, active_names: Optional[set] = None) -> list:
     if active_names is None:
         active_names = get_activity(db_path)["active_names"]
     activity = get_player_activity(db_path)
+    private_names = get_private_names(activity)
 
     stats = [r for r in get_player_statistics(db_path, use_enriched=True, min_games=MIN_GAMES)
              if r["name"] in active_names]
@@ -183,6 +198,8 @@ def get_table_data(db_path: str, active_names: Optional[set] = None) -> list:
             "hands_won": hands_won,
             "win_rate": round(win_rate, 1),
             "total_profit": round(total_profit, 2),
+            # True = lifetime loss over HIDE_LOSSES_OVER: never render $ amounts
+            "private": row["name"] in private_names,
             "avg_profit": round(avg_profit, 2),
             "showdowns": row["showdowns"] or 0,
             "last_played_ms": activity.get(row["name"], {}).get("last_played_ms"),
@@ -321,7 +338,8 @@ def _stat_bar_color(stat_name: str, value: float) -> str:
     return thresholds[-1][1]
 
 
-def _momentum_sparkline_svg(values: list, width: int = 110, height: int = 32) -> str:
+def _momentum_sparkline_svg(values: list, width: int = 110, height: int = 32,
+                            show_values: bool = True) -> str:
     """Render a small inline-SVG sparkline of avg/hand values with a trend arrow.
 
     Each session is a point connected by a polyline; points are colored green if
@@ -367,7 +385,10 @@ def _momentum_sparkline_svg(values: list, width: int = 110, height: int = 32) ->
     else:
         arrow, arrow_color = "→", "#aaaaaa"
 
-    title = f"Last {n} sessions avg/hand: " + ", ".join(f"{v:+.2f}" for v in values)
+    if show_values:
+        title = f"Last {n} sessions avg/hand: " + ", ".join(f"{v:+.2f}" for v in values)
+    else:
+        title = f"Trend over the last {n} sessions"
 
     return (
         f'<span class="momentum-cell" title="{title}">'
@@ -454,7 +475,8 @@ def build_player_profiles_html(table_data: list, now_ms: Optional[int] = None) -
         slug = slugify(name)
         profit = row["total_profit"]
         profit_class = "positive" if profit >= 0 else "negative"
-        profit_display = money(profit)
+        profit_span = ("" if row.get("private") else
+                       f'<span class="{profit_class}">{money(profit)}</span>')
 
         # Build stat rows for each category
         def stat_row(label, value, stat_key, suffix="%"):
@@ -533,7 +555,7 @@ def build_player_profiles_html(table_data: list, now_ms: Optional[int] = None) -
                     <span class="profile-summary">
                         <span>{row['games_played']} sessions, {row['hands_played']:,} hands</span>
                         <span>Last played {time_ago(row.get('last_played_ms'), now_ms)}</span>
-                        <span class="{profit_class}">{profit_display}</span>
+                        {profit_span}
                         <span class="chev" aria-hidden="true">&#9656;</span>
                     </span>
                 </button>
@@ -581,7 +603,8 @@ def build_player_profiles_html(table_data: list, now_ms: Optional[int] = None) -
 
 
 def build_latest_session_html(latest: dict, profile_slugs: Optional[set] = None,
-                              records: Optional[dict] = None) -> str:
+                              records: Optional[dict] = None,
+                              private_names: Optional[set] = None) -> str:
     """The 'Latest Session' hero: everyone seated around a poker table.
 
     Seats go clockwise from the top in finishing order, so the night's
@@ -592,6 +615,7 @@ def build_latest_session_html(latest: dict, profile_slugs: Optional[set] = None,
     import math
 
     profile_slugs = profile_slugs or set()
+    private_names = private_names or set()
     players = latest["players"]
     n = len(players)
 
@@ -602,14 +626,19 @@ def build_latest_session_html(latest: dict, profile_slugs: Optional[set] = None,
         top = 50 + 50 * math.sin(angle)
         cls = "positive" if p["profit"] >= 0 else "negative"
         winner = " winner" if i == 0 and p["profit"] > 0 else ""
+        if p["name"] in private_names:
+            # No dollar amount: show hands played in the amount slot instead
+            amount_html = f'<span class="seat-amount seat-private">{p["hands"]} hands</span>'
+        else:
+            amount_html = (f'<span class="seat-amount {cls}">{money(p["profit"])}</span>\n'
+                           f'                        <span class="seat-hands">{p["hands"]} hands</span>')
         slug = slugify(p["name"])
         attrs = (f' onclick="showProfile(\'{slug}\')" title="Open {esc(p["name"])}\'s profile"'
                  if slug in profile_slugs else ' tabindex="-1"')
         seats += f'''
                     <button type="button" class="seat{winner}" style="left:{left:.2f}%;top:{top:.2f}%;animation-delay:{i * 70}ms"{attrs}>
                         <span class="seat-name">{esc(p['name'])}</span>
-                        <span class="seat-amount {cls}">{money(p['profit'])}</span>
-                        <span class="seat-hands">{p['hands']} hands</span>
+                        {amount_html}
                     </button>'''
 
     return f'''
@@ -661,7 +690,8 @@ def build_records_html(records: Optional[dict]) -> str:
 
 def build_leaderboard_html(table_data: list, now_ms: int) -> str:
     """Sortable, searchable leaderboard. Advanced columns hide behind a toggle."""
-    max_abs = max((abs(r["total_profit"]) for r in table_data), default=1) or 1
+    max_abs = max((abs(r["total_profit"]) for r in table_data if not r.get("private")),
+                  default=1) or 1
 
     def signed(v):
         return f"+{v:.2f}" if v > 0 else f"{v:.2f}"
@@ -675,6 +705,17 @@ def build_leaderboard_html(table_data: list, now_ms: int) -> str:
         bar_w = abs(profit) / max_abs * 50  # half the bar each side of zero
         bar = (f'<span class="up" style="width:{bar_w:.1f}%"></span>' if profit >= 0
                else f'<span class="down" style="width:{bar_w:.1f}%"></span>')
+        private = row.get("private", False)
+        if private:
+            # Lifetime loss over HIDE_LOSSES_OVER: no amount, no bar, no raw value.
+            # Empty data-sort sorts lowest, which matches their rank anyway.
+            profit_td = ('<td class="num profit-cell" data-sort=""><span class="profit-wrap">'
+                         '<span class="profit-num private-amt" title="Amount not shown">&mdash;</span></span></td>')
+            avg_td = '<td class="num" data-sort=""><span class="private-amt" title="Amount not shown">&mdash;</span></td>'
+        else:
+            profit_td = (f'<td class="num profit-cell" data-sort="{profit}"><span class="profit-wrap">'
+                         f'<span class="pbar">{bar}</span><span class="profit-num {p_cls}">{signed(profit)}</span></span></td>')
+            avg_td = f'<td class="num {a_cls}" data-sort="{row["avg_profit"]}">{signed(row["avg_profit"])}</td>'
         trend = (row["momentum"][-1] - row["momentum"][0]) if len(row["momentum"]) >= 2 else 0
         ats = row["ats_pct"]
         style_tag = ""
@@ -694,12 +735,12 @@ def build_leaderboard_html(table_data: list, now_ms: int) -> str:
                         </td>
                         <td class="num">{row['games_played']}</td>
                         <td class="num" data-sort="{row['hands_played']}">{row['hands_played']:,}</td>
-                        <td class="num profit-cell" data-sort="{profit}"><span class="profit-wrap"><span class="pbar">{bar}</span><span class="profit-num {p_cls}">{signed(profit)}</span></span></td>
-                        <td class="num {a_cls}" data-sort="{row['avg_profit']}">{signed(row['avg_profit'])}</td>
+                        {profit_td}
+                        {avg_td}
                         <td class="num" data-sort="{row['win_rate']}">{row['win_rate']:.1f}%</td>
                         <td class="num" data-sort="{row['conv_vpip_pct']}">{row['conv_vpip_pct']:.1f}%</td>
                         <td class="num" data-sort="{row['pfr_pct']}">{row['pfr_pct']:.1f}%</td>
-                        <td data-sort="{trend:.4f}">{_momentum_sparkline_svg(row['momentum'])}</td>
+                        <td data-sort="{trend:.4f}">{_momentum_sparkline_svg(row['momentum'], show_values=not private)}</td>
                         <td class="num adv">{row['hands_won']}</td>
                         <td class="num adv" data-sort="{row['vpip_pct']}">{row['vpip_pct']:.1f}%</td>
                         <td class="num adv" data-sort="{ats if ats is not None else ''}">{f"{ats:.1f}%" if ats is not None else "-"}</td>
@@ -769,12 +810,14 @@ def build_past_players_html(past_players: Optional[list], window_days: int) -> s
     rows = ""
     for p in past_players:
         cls = "positive" if p["profit"] >= 0 else "negative"
+        pl_td = ('<td class="num"><span class="private-amt" title="Amount not shown">&mdash;</span></td>'
+                 if p.get("private") else f'<td class="num {cls}">{money(p["profit"])}</td>')
         rows += f"""
                         <tr>
                             <td>{esc(p['name'])}</td>
                             <td class="num">{p['games']}</td>
                             <td class="num">{p['hands']:,}</td>
-                            <td class="num {cls}">{money(p['profit'])}</td>
+                            {pl_td}
                             <td class="num">{fmt_date(p['last_played_ms'])}</td>
                         </tr>"""
     n = len(past_players)
@@ -799,7 +842,7 @@ def build_past_players_html(past_players: Optional[list], window_days: int) -> s
 def build_html(summary: dict, charts: dict, table_data: list,
                latest_session: dict = None, chart_data: dict = None,
                past_players: Optional[list] = None, records: Optional[dict] = None,
-               now_ms: Optional[int] = None) -> str:
+               now_ms: Optional[int] = None, private_names: Optional[set] = None) -> str:
     """Build the complete HTML dashboard as a string."""
     now = datetime.now(timezone.utc)
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -814,6 +857,9 @@ def build_html(summary: dict, charts: dict, table_data: list,
     page_css = PAGE_CSS_PATH.read_text(encoding="utf-8")
 
     profile_slugs = {slugify(r["name"]) for r in table_data}
+    if private_names is None:
+        private_names = {r["name"] for r in table_data if r.get("private")}
+        private_names |= {p["name"] for p in (past_players or []) if p.get("private")}
     leaderboard_section = build_leaderboard_html(table_data, now_ms)
     player_profiles_section = build_player_profiles_html(table_data, now_ms)
     past_section = build_past_players_html(past_players, ACTIVE_WINDOW_DAYS)
@@ -828,7 +874,7 @@ def build_html(summary: dict, charts: dict, table_data: list,
         ("chart-hand-analysis", "Hand Analysis",
          "Distribution of winning hand types and action frequency across all sessions."),
         ("chart-session-trends", "Session Trends",
-         "Top chart tracks cumulative profit/loss for the 3 biggest winners and 2 biggest losers. "
+         "Top chart tracks cumulative profit/loss for the 3 biggest winners and 2 of the biggest losers. "
          "Bottom heatmap shows every player\u2019s profit/loss per session at a glance. "
          "Hover any point or cell for details."),
         ("chart-momentum", "Player Momentum",
@@ -900,7 +946,7 @@ def build_html(summary: dict, charts: dict, table_data: list,
             <p class="subtitle"><strong>{summary['total_games']} sessions</strong> and <strong>{summary['total_hands']:,} hands</strong> since {first_label}, with {summary['total_events']:,} actions tracked. The leaderboard, profiles and charts follow the <strong>{active_count} regulars</strong> who've played in the last 12 months.</p>
         </header>
 
-        {build_latest_session_html(latest_session, profile_slugs, records)}
+        {build_latest_session_html(latest_session, profile_slugs, records, private_names)}
 
         {leaderboard_section}
 
@@ -945,6 +991,7 @@ def main():
     print(f"  {summary['total_hands']} hands, {summary['total_players']} players")
     activity_info = get_activity(DB_PATH)
     active_names = activity_info["active_names"]
+    private_names = activity_info["private_names"]
     past_players = get_past_players(activity_info)
     print(f"  {len(active_names)} players active in the last {ACTIVE_WINDOW_DAYS} days, "
           f"{len(past_players)} past players")
@@ -952,7 +999,8 @@ def main():
     # Step 2: Generate diagram PNGs + interactive chart data
     print("\n[2/4] Generating diagrams and chart data...")
     charts = generate_chart_base64(DB_PATH, output_dir)
-    chart_data = build_chart_data(DB_PATH, min_games=MIN_GAMES, active_names=active_names)
+    chart_data = build_chart_data(DB_PATH, min_games=MIN_GAMES, active_names=active_names,
+                                  private_names=private_names)
     print(f"  Generated {len(charts)} diagrams + interactive chart payload")
 
     # Step 3: Get table data
@@ -963,10 +1011,10 @@ def main():
     # Step 4: Generate HTML
     print("\n[4/4] Generating HTML dashboard...")
     latest_session = get_latest_session_summary(DB_PATH)
-    records = get_session_records(DB_PATH, active_names)
+    records = get_session_records(DB_PATH, active_names, exclude_names=private_names)
     html = build_html(summary, charts, table_data, latest_session, chart_data,
                       past_players=past_players, records=records,
-                      now_ms=activity_info["now_ms"])
+                      now_ms=activity_info["now_ms"], private_names=private_names)
 
     output_path = Path(output_dir) / "index.html"
     with open(output_path, "w", encoding="utf-8") as f:

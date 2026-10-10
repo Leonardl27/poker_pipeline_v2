@@ -33,6 +33,17 @@ python main.py unmapped              # List unmapped players
   is never deleted; they're listed in the collapsed "Past Players" section and
   still count toward session/hand totals
 
+## Hidden Amounts for Big Losers
+Players whose lifetime loss exceeds `HIDE_LOSSES_OVER` ($400, in
+`generate_dashboard.py`) keep their rank and stats, but none of their dollar
+amounts are shown anywhere: leaderboard profit/avg-hand show a dash, no
+profile header amount, latest-session seat shows hands instead, they're
+skipped for records, and charts drop them from $-axis views (trend lines,
+momentum, profit-driver points) or show attendance only (heatmap "played").
+The set is `activity_info["private_names"]`; table rows carry `row["private"]`.
+`check_private_amounts()` in `verify_dashboard.py` fails the build on any leak.
+**Any new feature that displays money must respect this.**
+
 ## Adding a New Chart
 1. Add a data builder function in `chart_data.py` and register it in
    `build_chart_data()` (plain Python types only — None for missing, no NaN)
@@ -96,6 +107,8 @@ Human must review the preview and approve before merge.
 
 ## Settings
 - `MIN_GAMES = 3` — minimum sessions to appear in dashboard
+- `HIDE_LOSSES_OVER = 400` — hide every dollar amount for players whose
+  lifetime loss is bigger than this
 - `ACTIVE_WINDOW_DAYS = 365` — must have played within this many days of the
   build to appear on the leaderboard/profiles/charts
 - Live URL: https://leonardl27.github.io/poker_pipeline_v2/

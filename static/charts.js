@@ -168,15 +168,16 @@
     d.players.forEach(function (p) {
       var r = 7 + 14 * Math.sqrt(p.hands / maxHands);
       var dot = el(svg, 'circle', { cx: X(p.vpip), cy: Y(p.pfr), r: r,
-        fill: p.profit >= 0 ? C.pos : C.accent, 'fill-opacity': 0.75,
+        fill: p.winner ? C.pos : C.accent, 'fill-opacity': 0.75,
         stroke: C.text, 'stroke-width': 0.8, cursor: 'pointer' });
       txt(svg, X(p.vpip), Y(p.pfr) - r - 5, p.name,
           { fill: C.text, 'font-size': 11, 'text-anchor': 'middle' });
       attachTip(dot, function () {
+        // profit is null when the player's amounts are hidden
+        var res = p.profit === null ? '' :
+          ' · <span class="' + moneyClass(p.profit) + '">' + money(p.profit) + '</span>';
         return '<strong>' + p.name + '</strong><br>VPIP ' + p.vpip +
-          '% · PFR ' + p.pfr + '%<br>' + fmtNum(p.hands) +
-          ' hands · <span class="' + moneyClass(p.profit) + '">' +
-          money(p.profit) + '</span>';
+          '% · PFR ' + p.pfr + '%<br>' + fmtNum(p.hands) + ' hands' + res;
       });
     });
 
@@ -307,7 +308,7 @@
     var vmax = 1;
     d.matrix.forEach(function (row) {
       row.forEach(function (v) {
-        if (v !== null && Math.abs(v) > vmax) vmax = Math.abs(v);
+        if (typeof v === 'number' && Math.abs(v) > vmax) vmax = Math.abs(v);
       });
     });
 
@@ -316,6 +317,17 @@
           { fill: C.text, 'font-size': 11, 'text-anchor': 'end' });
       d.matrix[r].forEach(function (v, c) {
         var x = m.l + c * cellW, y = m.t + r * cellH;
+        if (v === 'played') {
+          // Amount hidden for this player: show attendance only
+          var pc = el(svg, 'rect', { x: x + 0.5, y: y + 0.5,
+            width: cellW - 1, height: cellH - 1, fill: C.border });
+          el(svg, 'circle', { cx: x + cellW / 2, cy: y + cellH / 2, r: 3,
+            fill: C.neutral, opacity: 0.7 });
+          attachTip(pc, function () {
+            return '<strong>' + name + '</strong><br>' + d.labels[c] + ' · played';
+          });
+          return;
+        }
         var cell = el(svg, 'rect', { x: x + 0.5, y: y + 0.5,
           width: cellW - 1, height: cellH - 1,
           fill: divergingColor(v, vmax), cursor: v === null ? 'default' : 'pointer' });
@@ -514,6 +526,10 @@
 
       txt(svg, (m.l + W - m.r) / 2, H - 8, panel.label,
           { fill: C.text, 'font-size': 11.5, 'text-anchor': 'middle' });
+      if (panel.hidden) {
+        txt(svg, W - m.r - 6, m.t + 18, panel.hidden + ' not plotted, included in fit',
+            { fill: C.neutral, 'font-size': 10, 'text-anchor': 'end' });
+      }
     });
   }
 

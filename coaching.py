@@ -259,7 +259,10 @@ def _headline(player: dict) -> str:
     avg = player.get("avg_profit", 0) or 0
     momentum = player.get("momentum") or []
 
-    if avg > 0.05:
+    if player.get("private"):
+        # Lifetime loss is large enough that amounts are hidden on the board
+        result = f"Your results over {hands:,} hands are below break-even"
+    elif avg > 0.05:
         result = f"You're winning about ${avg:.2f} a hand over {hands:,} hands"
     elif avg < -0.05:
         result = f"You're losing about ${abs(avg):.2f} a hand over {hands:,} hands"

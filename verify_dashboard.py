@@ -22,7 +22,8 @@ matplotlib.use('Agg')
 
 from generate_dashboard import (
     run_pipeline, generate_chart_base64, get_table_data, build_html,
-    get_activity, get_past_players, DB_PATH, MIN_GAMES, ACTIVE_WINDOW_DAYS,
+    get_activity, get_past_players, slugify, DB_PATH, MIN_GAMES, ACTIVE_WINDOW_DAYS,
+    HIDE_LOSSES_OVER,
 )
 from visualize import get_latest_session_summary, get_session_records
 from chart_data import build_chart_data
@@ -61,6 +62,7 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
               f"{summary['total_hands']} hands, {summary['total_players']} players")
         activity_info = get_activity(DB_PATH)
         active_names = activity_info["active_names"]
+        private_names = activity_info["private_names"]
         past_players = get_past_players(activity_info)
         print(f"      {len(active_names)} active in last {ACTIVE_WINDOW_DAYS} days, "
               f"{len(past_players)} past players")
@@ -138,11 +140,14 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
     try:
         latest_session = get_latest_session_summary(DB_PATH)
         chart_data = build_chart_data(DB_PATH, min_games=MIN_GAMES,
-                                      active_names=active_names)
-        records = get_session_records(DB_PATH, active_names)
+                                      active_names=active_names,
+                                      private_names=private_names)
+        records = get_session_records(DB_PATH, active_names,
+                                      exclude_names=private_names)
         html = build_html(summary, charts, table_data, latest_session, chart_data,
                           past_players=past_players, records=records,
-                          now_ms=activity_info["now_ms"])
+                          now_ms=activity_info["now_ms"],
+                          private_names=private_names)
     except Exception as e:
         errors.append(f"HTML build failed: {e}")
         return errors, warnings
@@ -217,6 +222,12 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
         if block.count("Try this:") != leaks:
             errors.append(f"'How to improve' #{i+1}: every leak needs a 'Try this' tip")
 
+    # Hidden amounts: players who lost more than HIDE_LOSSES_OVER must have
+    # no dollar figure anywhere (rendered text, chart payload or page source)
+    errors.extend(check_private_amounts(
+        html_no_base64, chart_data, table_data, latest_session, records,
+        private_names, activity_info["activity"]))
+
     # Write the HTML
     output_path = Path(output_dir) / "index.html"
     with open(output_path, "w", encoding="utf-8") as f:
@@ -226,6 +237,77 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
     print(f"      Dashboard written: {output_path} ({size_kb:.1f} KB)")
 
     return errors, warnings
+
+
+def check_private_amounts(html, chart_data, table_data, latest_session,
+                          records, private_names, activity) -> list:
+    """Return errors if any hidden player's dollar amount can be seen."""
+    import re
+    errs = []
+    if not private_names:
+        return errs
+    print(f"      Amounts hidden for {len(private_names)} player(s) "
+          f"(lifetime loss > ${HIDE_LOSSES_OVER})")
+
+    # 1. Their lifetime and per-hand numbers never appear in the page
+    #    (stylesheet excluded; match standalone numbers, not e.g. "1.02rem")
+    page = re.sub(r"<style>.*?</style>", "", html, flags=re.DOTALL)
+    rows = {r["name"]: r for r in table_data}
+    for name in private_names:
+        # Lifetime total: distinctive (> HIDE_LOSSES_OVER), match bare number
+        v = abs(activity[name]["profit"])
+        patterns = [f"{v:.2f}", f"{v:,.2f}"]
+        # Per-hand average: small numbers collide with other stats, so only
+        # match the signed/dollar form it would be displayed in
+        if name in rows:
+            a = rows[name]["avg_profit"]
+            patterns += [f"{a:+.2f}", f"-${abs(a):.2f}"]
+        for txt in set(patterns):
+            if re.search(rf"(?<![\d.,]){re.escape(txt)}(?![\d%a-z])", page):
+                errs.append(f"Hidden amount for {name} ({txt}) found in HTML")
+
+    # 2. Leaderboard row and profile header contain no $ or signed amounts
+    for name in private_names & set(rows):
+        slug = slugify(name)
+        m = re.search(rf'<tr[^>]*data-slug="{slug}".*?</tr>', html, re.DOTALL)
+        if m and re.search(r'\$|[+-]\d+\.\d\d<', m.group(0)):
+            errs.append(f"Leaderboard row for {name} shows a dollar amount")
+        m = re.search(rf'id="profile-btn-{slug}".*?</button>', html, re.DOTALL)
+        if m and "$" in m.group(0):
+            errs.append(f"Profile header for {name} shows a dollar amount")
+
+    # 3. Chart payload: no profit values for hidden players
+    for p in chart_data["archetypes"]["players"]:
+        if p["name"] in private_names and p["profit"] is not None:
+            errs.append(f"Archetype chart exposes profit for {p['name']}")
+    st = chart_data["session_trends"]
+    for f in st["featured"]:
+        if f["name"] in private_names:
+            errs.append(f"Session trend line features {f['name']}")
+    for name, row in zip(st["names"], st["matrix"]):
+        if name in private_names and any(isinstance(v, (int, float)) for v in row):
+            errs.append(f"Session heatmap exposes amounts for {name}")
+    for p in chart_data["momentum"]["players"]:
+        if p["name"] in private_names:
+            errs.append(f"Momentum chart includes {p['name']}")
+    for panel in (chart_data.get("profit_drivers") or {}).get("panels", []):
+        for pt in panel["points"]:
+            if pt["name"] in private_names:
+                errs.append(f"Profit drivers chart plots {pt['name']}")
+
+    # 4. Latest session seat and records
+    if latest_session:
+        for p in latest_session["players"]:
+            if p["name"] in private_names:
+                m = re.search(rf'<span class="seat-name">{re.escape(p["name"])}</span>(.*?)</button>',
+                              html, re.DOTALL)
+                if m and "$" in m.group(1):
+                    errs.append(f"Latest-session seat shows an amount for {p['name']}")
+    for key in ("best_night", "worst_night", "hot_streak"):
+        rec = (records or {}).get(key)
+        if rec and rec.get("name") in private_names:
+            errs.append(f"Record '{key}' names {rec['name']}")
+    return errs
 
 
 def main():
