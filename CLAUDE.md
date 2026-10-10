@@ -24,7 +24,14 @@ python main.py unmapped              # List unmapped players
 - Architecture diagrams (pipeline/CI-CD) are matplotlib PNGs base64-embedded
   into `index.html`; the matplotlib data-chart functions in `visualize.py`
   remain for CLI use (`main.py`) only
+- Page styles and interactions live in `static/dashboard.css` and
+  `static/dashboard.js`, also inlined into `index.html` at build time
 - Dashboard is a single self-contained HTML file (no external requests)
+- Activity window: players with no session in the last `ACTIVE_WINDOW_DAYS`
+  are left off the leaderboard, profiles and charts (`get_activity()` in
+  `generate_dashboard.py`, `active_names` in `build_chart_data()`). Their data
+  is never deleted; they're listed in the collapsed "Past Players" section and
+  still count toward session/hand totals
 
 ## Adding a New Chart
 1. Add a data builder function in `chart_data.py` and register it in
@@ -81,4 +88,6 @@ Human must review the preview and approve before merge.
 
 ## Settings
 - `MIN_GAMES = 3` — minimum sessions to appear in dashboard
+- `ACTIVE_WINDOW_DAYS = 365` — must have played within this many days of the
+  build to appear on the leaderboard/profiles/charts
 - Live URL: https://leonardl27.github.io/poker_pipeline_v2/

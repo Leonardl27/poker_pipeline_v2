@@ -294,6 +294,121 @@ def get_recent_session_avg_per_hand(db_path: str = "poker.db", n: int = 5,
     return {name: sessions[-n:] for name, sessions in by_player.items()}
 
 
+def get_player_activity(db_path: str = "poker.db") -> dict:
+    """Lifetime activity for every canonical player (all history, no filters).
+
+    Returns {name: {"games", "hands", "profit", "last_played_ms"}}. Used to
+    decide who is "active" on the dashboard and to list past players — the
+    underlying data is never deleted, only filtered at display time.
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT vhp.name,
+               COUNT(DISTINCT h.game_id)    AS games,
+               COUNT(DISTINCT vhp.hand_id)  AS hands,
+               SUM(vhp.net_gain) / 100.0    AS profit,
+               MAX(h.started_at)            AS last_played_ms
+        FROM v_hand_players vhp
+        JOIN hands h ON vhp.hand_id = h.id
+        GROUP BY vhp.cid
+    """)
+    out = {
+        r["name"]: {
+            "games": r["games"],
+            "hands": r["hands"],
+            "profit": round(r["profit"] or 0, 2),
+            "last_played_ms": r["last_played_ms"],
+        }
+        for r in cursor.fetchall()
+    }
+    conn.close()
+    return out
+
+
+def get_active_player_names(activity: dict, cutoff_ms: int) -> set:
+    """Names of players whose most recent hand is on/after cutoff_ms."""
+    return {name for name, a in activity.items()
+            if a["last_played_ms"] is not None and a["last_played_ms"] >= cutoff_ms}
+
+
+def get_session_records(db_path: str = "poker.db",
+                        active_names: Optional[set] = None) -> dict:
+    """All-time fun records for the dashboard 'records' strip.
+
+    - best_night / worst_night: biggest single-session win / loss (all players)
+    - biggest_pot: largest pot ever awarded
+    - hot_streak: longest *current* run of consecutive winning sessions
+      among active players (only reported if >= 2)
+    Each value is a dict or None.
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT vhp.cid, vhp.name, h.game_id,
+               MIN(h.started_at)         AS session_start,
+               SUM(vhp.net_gain) / 100.0 AS profit
+        FROM v_hand_players vhp
+        JOIN hands h ON vhp.hand_id = h.id
+        GROUP BY vhp.cid, h.game_id
+        ORDER BY vhp.cid, session_start
+    """)
+    sessions = cursor.fetchall()
+
+    cursor.execute("""
+        SELECT MAX(hr.pot) / 100.0 AS pot, h.started_at
+        FROM hand_results hr
+        JOIN hands h ON hr.hand_id = h.id
+        GROUP BY hr.hand_id
+        ORDER BY pot DESC
+        LIMIT 1
+    """)
+    pot_row = cursor.fetchone()
+    conn.close()
+
+    def label(ms):
+        try:
+            return datetime.fromtimestamp(ms / 1000).strftime("%b %d, %Y")
+        except (ValueError, TypeError, OSError):
+            return ""
+
+    records = {"best_night": None, "worst_night": None,
+               "biggest_pot": None, "hot_streak": None}
+    if sessions:
+        best = max(sessions, key=lambda r: r["profit"] or 0)
+        worst = min(sessions, key=lambda r: r["profit"] or 0)
+        records["best_night"] = {"name": best["name"],
+                                 "amount": round(best["profit"] or 0, 2),
+                                 "date": label(best["session_start"])}
+        records["worst_night"] = {"name": worst["name"],
+                                  "amount": round(worst["profit"] or 0, 2),
+                                  "date": label(worst["session_start"])}
+
+        by_player: dict = defaultdict(list)
+        names: dict = {}
+        for r in sessions:
+            by_player[r["cid"]].append(r["profit"] or 0)
+            names[r["cid"]] = r["name"]
+        best_streak = None
+        for cid, profits in by_player.items():
+            if active_names is not None and names[cid] not in active_names:
+                continue
+            streak = 0
+            for p in reversed(profits):
+                if p > 0:
+                    streak += 1
+                else:
+                    break
+            if streak >= 2 and (best_streak is None or streak > best_streak["count"]):
+                best_streak = {"name": names[cid], "count": streak}
+        records["hot_streak"] = best_streak
+
+    if pot_row and pot_row["pot"]:
+        records["biggest_pot"] = {"amount": round(pot_row["pot"], 2),
+                                  "date": label(pot_row["started_at"])}
+    return records
+
+
 def get_latest_session_summary(db_path: str = "poker.db") -> Optional[dict]:
     """Summary of the most recent session: date, hands dealt, per-player results.
 
