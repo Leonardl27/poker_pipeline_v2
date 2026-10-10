@@ -28,6 +28,7 @@ from visualize import (
 )
 from hud_stats import calculate_hud_stats
 from scouting import generate_scouting_report
+from coaching import generate_coaching, table_medians, leak_gauge
 from chart_data import build_chart_data
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -209,6 +210,21 @@ def get_table_data(db_path: str, active_names: Optional[set] = None) -> list:
             "fold_to_cbet_pct": (round(h["fold_to_cbet_pct"], 1)
                                  if h.get("fold_to_cbet_pct") is not None else None),
             "momentum": [v for _, v in momentum_by_name.get(row["name"], [])],
+            # Opportunity counts behind each stat (coaching skips thin samples)
+            "samples": {
+                "hands": h.get("hands", hands_played),
+                "three_bet_opportunities": h.get("three_bet_opportunities"),
+                "flop_eligible_hands": h.get("flop_eligible_hands"),
+                "bb_faced_raise_hands": h.get("bb_faced_raise_hands"),
+                "bb_steal_faced_hands": h.get("bb_steal_faced_hands"),
+                "ats_opportunities": h.get("ats_opportunities"),
+                "postflop_actions": ((h.get("postflop_bets_raises") or 0)
+                                     + (h.get("postflop_calls") or 0)),
+                "cbet_opportunities": h.get("cbet_opportunities"),
+                "faced_cbet": h.get("faced_cbet"),
+                "flop_seen_hands": h.get("flop_seen_hands"),
+                "showdown_hands": h.get("showdown_hands"),
+            },
         })
 
     # Playing-style tag from the same VPIP/PFR median split as the
@@ -367,9 +383,71 @@ def _momentum_sparkline_svg(values: list, width: int = 110, height: int = 32) ->
     )
 
 
+def _target_label(leak: dict) -> str:
+    low, high = leak["low"], leak["high"]
+    if leak["key"] == "aggression_factor":
+        return f"{low:g}\u2013{high:g}"
+    if high >= 100:
+        return f"{low:g}%+"
+    return f"{low:g}\u2013{high:g}%"
+
+
+def build_coaching_html(row: dict, medians: dict) -> str:
+    """'How to improve' block: headline, top leaks with gauges, strengths."""
+    coaching = generate_coaching(row, medians)
+    first = esc(row["name"].split()[0])
+    is_af = lambda leak: leak["key"] == "aggression_factor"
+
+    cards = ""
+    for leak in coaching["leaks"]:
+        g = leak_gauge(leak)
+        med = leak.get("median")
+        med_label = (f"{med:.1f}" if is_af(leak) else f"{med:.0f}%") if med is not None else "n/a"
+        med_mark = (f'<span class="g-med" style="left:{g["median"]:.1f}%"></span>'
+                    if g["median"] is not None else "")
+        aria = (f'{esc(leak["label"])}: {first} {leak["value_label"]}, table {med_label}, '
+                f'target {_target_label(leak)}')
+        cards += f'''
+                            <article class="leak">
+                                <h5>{esc(leak["title"])}</h5>
+                                <div class="gauge-label">{esc(leak["label"])}</div>
+                                <div class="gauge" role="img" aria-label="{aria}">
+                                    <span class="g-band" style="left:{g["band_left"]:.1f}%;width:{g["band_right"] - g["band_left"]:.1f}%"></span>
+                                    {med_mark}
+                                    <span class="g-you" style="left:{g["you"]:.1f}%"></span>
+                                </div>
+                                <div class="gauge-legend">
+                                    <span class="lg-you">{first} {leak["value_label"]}</span>
+                                    <span class="lg-med">Table {med_label}</span>
+                                    <span class="lg-band">Target {_target_label(leak)}</span>
+                                </div>
+                                <p class="leak-why">{esc(leak["why"])}</p>
+                                <p class="leak-try"><strong>Try this:</strong> {esc(leak["try"])}</p>
+                            </article>'''
+
+    if not cards:
+        cards = ('<p class="leak-none">No big leaks stand out in the numbers. '
+                 'Keep doing what you\'re doing and focus on reading opponents.</p>')
+
+    strengths = ""
+    if coaching["strengths"]:
+        items = "".join(f"<li>{esc(t)}</li>" for t in coaching["strengths"])
+        strengths = f'<div class="strengths"><h5>What\'s working</h5><ul>{items}</ul></div>'
+
+    return f'''
+                    <div class="coaching">
+                        <h4>How to improve</h4>
+                        <p class="coaching-headline">{esc(coaching["headline"])}</p>
+                        <div class="leaks">{cards}
+                        </div>
+                        {strengths}
+                    </div>'''
+
+
 def build_player_profiles_html(table_data: list, now_ms: Optional[int] = None) -> str:
     """Generate collapsible player profile cards."""
     now_ms = now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
+    medians = table_medians(table_data)
     profiles = ""
     for row in table_data:
         name = row["name"]
@@ -460,6 +538,8 @@ def build_player_profiles_html(table_data: list, now_ms: Optional[int] = None) -
                     </span>
                 </button>
                 <div class="profile-body" id="profile-body-{slug}">
+                    {build_coaching_html(row, medians)}
+                    <h4 class="breakdown-title">Full stat breakdown</h4>
                     <div class="profile-stats-grid">
                         <div class="stat-category">
                             <h4>Preflop Tendencies</h4>
@@ -494,7 +574,7 @@ def build_player_profiles_html(table_data: list, now_ms: Optional[int] = None) -
     return f'''
         <section class="player-profiles-section" id="profiles">
             <h2 class="section-title">Player Profiles</h2>
-            <p class="profiles-hint">How each regular plays, and how to play against them. Open a card here, or click a name in the leaderboard.</p>
+            <p class="profiles-hint">Each card shows how that player can improve, their full stats, and how opponents can play against them. Open a card here, or click a name in the leaderboard.</p>
             <div class="profile-grid">{profiles}
             </div>
         </section>'''

@@ -42,6 +42,14 @@ python main.py unmapped              # List unmapped players
    `build_html()` in `generate_dashboard.py`
 4. Add the div id to `EXPECTED_CHART_DIVS` in `verify_dashboard.py`
 
+## Player Advice ("How to improve")
+`coaching.py` builds the per-player improvement section in each profile
+(scouting.py is the opponent-facing counterpart). Each stat has a healthy
+target band in `TARGETS`; leaks are ranked by distance outside the band x
+weight (x1.5 when also worse than the table median), max one per area, and
+stats need `MIN_SAMPLE` opportunities. Copy lives in `LEAK_TEXT` /
+`STRENGTH_TEXT`. Sample counts come from `row["samples"]` in `get_table_data()`.
+
 ## Adding a New HUD Stat
 1. Add accumulator keys in `calculate_hud_stats()` defaultdict in `hud_stats.py`
 2. Add computation logic in the per-hand loop

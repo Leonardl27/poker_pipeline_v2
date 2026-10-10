@@ -252,7 +252,7 @@ tr.top-3 td:first-child { box-shadow: inset 3px 0 0 var(--bronze); }
 .chev { color: var(--faint); transition: transform 0.25s ease; }
 .profile-header[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .profile-body { padding: 0 20px; max-height: 0; overflow: hidden; transition: max-height 0.3s ease, padding 0.3s ease; }
-.profile-body.open { padding: 20px; max-height: 900px; border-top: 1px solid var(--border); }
+.profile-body.open { padding: 20px; max-height: 4000px; border-top: 1px solid var(--border); }
 .profile-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
 .stat-category h4 {
   color: var(--accent); font-size: 0.95rem; margin-bottom: 12px;
@@ -279,6 +279,43 @@ tr.top-3 td:first-child { box-shadow: inset 3px 0 0 var(--bronze); }
 }
 .scouting-bullets li:last-child { border-bottom: none; }
 .scouting-bullets li::before { content: "\2660"; color: var(--accent); position: absolute; left: 0; font-size: 0.75rem; top: 7px; }
+
+/* ---- how to improve (coaching.py) ------------------------------- */
+.coaching { margin-bottom: 26px; }
+.coaching h4, .breakdown-title {
+  font-family: var(--display); font-weight: 600; font-size: 1.25rem; color: var(--text);
+  margin-bottom: 4px;
+}
+.breakdown-title { margin: 6px 0 14px; font-size: 1.05rem; color: var(--muted); }
+.coaching-headline { color: var(--muted); font-size: 0.93rem; margin-bottom: 14px; max-width: 80ch; }
+.leaks { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.leak {
+  background: var(--bg); border: 1px solid var(--border); border-top: 3px solid var(--gold);
+  border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column;
+}
+.leak h5 { font-size: 1rem; color: var(--text); margin-bottom: 10px; }
+.gauge-label { color: var(--faint); font-size: 0.76rem; margin-bottom: 6px; }
+.gauge { position: relative; height: 10px; background: var(--border); border-radius: 5px; margin: 0 6px; }
+.gauge .g-band { position: absolute; top: 0; bottom: 0; background: rgba(76, 175, 80, 0.45); border-radius: 5px; }
+.gauge .g-med { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--muted); }
+.gauge .g-you {
+  position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border-radius: 50%; background: var(--gold); border: 2px solid var(--bg);
+}
+.gauge-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.76rem; margin: 8px 0 10px; color: var(--muted); }
+.gauge-legend span::before { content: ""; display: inline-block; vertical-align: middle; margin-right: 5px; }
+.lg-you::before { width: 9px; height: 9px; border-radius: 50%; background: var(--gold); }
+.lg-med::before { width: 2px; height: 11px; background: var(--muted); }
+.lg-band::before { width: 14px; height: 8px; border-radius: 3px; background: rgba(76, 175, 80, 0.45); }
+.leak-why { font-size: 0.86rem; color: var(--muted); margin-bottom: 8px; }
+.leak-try { font-size: 0.88rem; color: var(--text); margin-top: auto; }
+.leak-try strong { color: var(--gold); }
+.leak-none { color: var(--muted); font-size: 0.9rem; }
+.strengths { margin-top: 14px; }
+.strengths h5 { font-size: 0.9rem; color: var(--text); margin-bottom: 6px; }
+.strengths ul { list-style: none; display: grid; gap: 4px; }
+.strengths li { font-size: 0.88rem; color: var(--muted); padding-left: 22px; position: relative; }
+.strengths li::before { content: "\2713"; position: absolute; left: 2px; color: var(--pos); font-weight: 700; }
 
 /* ---- past players ------------------------------------------------- */
 .past-players { padding: 46px 0 10px; }
