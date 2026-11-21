@@ -33,16 +33,18 @@ python main.py unmapped              # List unmapped players
   is never deleted; they're listed in the collapsed "Past Players" section and
   still count toward session/hand totals
 
-## Hidden Amounts for Big Losers
-Players whose lifetime loss exceeds `HIDE_LOSSES_OVER` ($400, in
-`generate_dashboard.py`) keep their rank and stats, but none of their dollar
-amounts are shown anywhere: leaderboard profit/avg-hand show a dash, no
-profile header amount, latest-session seat shows hands instead, they're
-skipped for records, and charts drop them from $-axis views (trend lines,
-momentum, profit-driver points) or show attendance only (heatmap "played").
+## Hidden Lifetime Totals
+Players named in `HIDE_TOTALS_FOR` (in `generate_dashboard.py`; currently
+Jake Joraanstad) keep their rank and stats, and their results for single
+nights are shown like everyone else's: latest-session seat, best/worst-night
+records, the session heatmap and the momentum bars/sparklines. Anything that
+shows or plots a lifetime figure is hidden: leaderboard profit and avg/hand
+show a dash, no profile header amount, past-players profit, and they are left
+out of the cumulative trend lines, archetype profit and profit-driver points.
 The set is `activity_info["private_names"]`; table rows carry `row["private"]`.
-`check_private_amounts()` in `verify_dashboard.py` fails the build on any leak.
-**Any new feature that displays money must respect this.**
+`check_private_amounts()` in `verify_dashboard.py` fails the build if a
+lifetime figure leaks, or if the latest-session seat stops showing the night.
+**Any new feature that displays lifetime money must respect this.**
 
 ## Adding a New Chart
 1. Add a data builder function in `chart_data.py` and register it in
@@ -121,8 +123,8 @@ Human must review the preview and approve before merge.
 
 ## Settings
 - `MIN_GAMES = 3` — minimum sessions to appear in dashboard
-- `HIDE_LOSSES_OVER = 400` — hide every dollar amount for players whose
-  lifetime loss is bigger than this
+- `HIDE_TOTALS_FOR = {"Jake Joraanstad"}` — players whose lifetime totals
+  are hidden (per-night results still shown)
 - `ACTIVE_WINDOW_DAYS = 365` — must have played within this many days of the
   build to appear on the leaderboard/profiles/charts
 - Live URL: https://leonardl27.github.io/poker_pipeline_v2/

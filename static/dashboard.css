@@ -190,7 +190,6 @@ tr.top-3 td:first-child { box-shadow: inset 3px 0 0 var(--bronze); }
 .pbar .down { right: 50%; background: var(--neg); }
 .profit-num { min-width: 78px; text-align: right; }
 .private-amt { color: var(--faint); }
-.seat-private { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
 .momentum-cell { display: inline-flex; align-items: center; gap: 6px; }
 .momentum-cell svg { display: block; }
 .momentum-arrow { font-weight: bold; font-size: 1rem; }

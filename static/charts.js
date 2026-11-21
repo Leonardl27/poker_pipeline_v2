@@ -317,17 +317,6 @@
           { fill: C.text, 'font-size': 11, 'text-anchor': 'end' });
       d.matrix[r].forEach(function (v, c) {
         var x = m.l + c * cellW, y = m.t + r * cellH;
-        if (v === 'played') {
-          // Amount hidden for this player: show attendance only
-          var pc = el(svg, 'rect', { x: x + 0.5, y: y + 0.5,
-            width: cellW - 1, height: cellH - 1, fill: C.border });
-          el(svg, 'circle', { cx: x + cellW / 2, cy: y + cellH / 2, r: 3,
-            fill: C.neutral, opacity: 0.7 });
-          attachTip(pc, function () {
-            return '<strong>' + name + '</strong><br>' + d.labels[c] + ' · played';
-          });
-          return;
-        }
         var cell = el(svg, 'rect', { x: x + 0.5, y: y + 0.5,
           width: cellW - 1, height: cellH - 1,
           fill: divergingColor(v, vmax), cursor: v === null ? 'default' : 'pointer' });
