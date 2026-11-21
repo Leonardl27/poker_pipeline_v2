@@ -23,7 +23,6 @@ matplotlib.use('Agg')
 from generate_dashboard import (
     run_pipeline, generate_chart_base64, get_table_data, build_html,
     get_activity, get_past_players, slugify, DB_PATH, MIN_GAMES, ACTIVE_WINDOW_DAYS,
-    HIDE_LOSSES_OVER,
 )
 from visualize import get_latest_session_summary, get_session_records
 from starting_hands import FULL_FOLD_COVERAGE
@@ -143,8 +142,7 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
         chart_data = build_chart_data(DB_PATH, min_games=MIN_GAMES,
                                       active_names=active_names,
                                       private_names=private_names)
-        records = get_session_records(DB_PATH, active_names,
-                                      exclude_names=private_names)
+        records = get_session_records(DB_PATH, active_names)
         html = build_html(summary, charts, table_data, latest_session, chart_data,
                           past_players=past_players, records=records,
                           now_ms=activity_info["now_ms"],
@@ -237,8 +235,9 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
         if mode == "full" and m and int(m.group(1)) < FULL_FOLD_COVERAGE * 100:
             errors.append(f"Starting-hands grid #{i+1} uses fold data with only {m.group(1)}% folds visible")
 
-    # Hidden amounts: players who lost more than HIDE_LOSSES_OVER must have
-    # no dollar figure anywhere (rendered text, chart payload or page source)
+    # Hidden totals: players in HIDE_TOTALS_FOR must have no lifetime dollar
+    # figure anywhere (rendered text, chart payload or page source), while
+    # their per-night results are still shown
     errors.extend(check_private_amounts(
         html_no_base64, chart_data, table_data, latest_session, records,
         private_names, activity_info["activity"]))
@@ -256,20 +255,22 @@ def verify(output_dir: str = "_site") -> tuple[list[str], list[str]]:
 
 def check_private_amounts(html, chart_data, table_data, latest_session,
                           records, private_names, activity) -> list:
-    """Return errors if any hidden player's dollar amount can be seen."""
+    """Return errors if a hidden-total player's lifetime figure can be seen.
+
+    Per-night results (latest session, records, heatmap, momentum) are meant
+    to be shown for these players; only lifetime totals are hidden.
+    """
     import re
     errs = []
     if not private_names:
         return errs
-    print(f"      Amounts hidden for {len(private_names)} player(s) "
-          f"(lifetime loss > ${HIDE_LOSSES_OVER})")
+    print(f"      Lifetime totals hidden for {len(private_names)} player(s)")
 
     # 1. Their lifetime and per-hand numbers never appear in the page
     #    (stylesheet excluded; match standalone numbers, not e.g. "1.02rem")
     page = re.sub(r"<style>.*?</style>", "", html, flags=re.DOTALL)
     rows = {r["name"]: r for r in table_data}
     for name in private_names:
-        # Lifetime total: distinctive (> HIDE_LOSSES_OVER), match bare number
         v = abs(activity[name]["profit"])
         patterns = [f"{v:.2f}", f"{v:,.2f}"]
         # Per-hand average: small numbers collide with other stats, so only
@@ -279,7 +280,7 @@ def check_private_amounts(html, chart_data, table_data, latest_session,
             patterns += [f"{a:+.2f}", f"-${abs(a):.2f}"]
         for txt in set(patterns):
             if re.search(rf"(?<![\d.,]){re.escape(txt)}(?![\d%a-z])", page):
-                errs.append(f"Hidden amount for {name} ({txt}) found in HTML")
+                errs.append(f"Hidden total for {name} ({txt}) found in HTML")
 
     # 2. Leaderboard row and profile header contain no $ or signed amounts
     for name in private_names & set(rows):
@@ -291,37 +292,26 @@ def check_private_amounts(html, chart_data, table_data, latest_session,
         if m and "$" in m.group(0):
             errs.append(f"Profile header for {name} shows a dollar amount")
 
-    # 3. Chart payload: no profit values for hidden players
+    # 3. Chart payload: nothing that plots a lifetime figure
     for p in chart_data["archetypes"]["players"]:
         if p["name"] in private_names and p["profit"] is not None:
             errs.append(f"Archetype chart exposes profit for {p['name']}")
-    st = chart_data["session_trends"]
-    for f in st["featured"]:
+    for f in chart_data["session_trends"]["featured"]:
         if f["name"] in private_names:
-            errs.append(f"Session trend line features {f['name']}")
-    for name, row in zip(st["names"], st["matrix"]):
-        if name in private_names and any(isinstance(v, (int, float)) for v in row):
-            errs.append(f"Session heatmap exposes amounts for {name}")
-    for p in chart_data["momentum"]["players"]:
-        if p["name"] in private_names:
-            errs.append(f"Momentum chart includes {p['name']}")
+            errs.append(f"Cumulative trend line features {f['name']}")
     for panel in (chart_data.get("profit_drivers") or {}).get("panels", []):
         for pt in panel["points"]:
             if pt["name"] in private_names:
                 errs.append(f"Profit drivers chart plots {pt['name']}")
 
-    # 4. Latest session seat and records
+    # 4. Per-night results ARE shown: latest-session seat carries an amount
     if latest_session:
         for p in latest_session["players"]:
             if p["name"] in private_names:
                 m = re.search(rf'<span class="seat-name">{re.escape(p["name"])}</span>(.*?)</button>',
                               html, re.DOTALL)
-                if m and "$" in m.group(1):
-                    errs.append(f"Latest-session seat shows an amount for {p['name']}")
-    for key in ("best_night", "worst_night", "hot_streak"):
-        rec = (records or {}).get(key)
-        if rec and rec.get("name") in private_names:
-            errs.append(f"Record '{key}' names {rec['name']}")
+                if m and "$" not in m.group(1):
+                    errs.append(f"Latest-session seat for {p['name']} is missing the night's result")
     return errs
 
 
