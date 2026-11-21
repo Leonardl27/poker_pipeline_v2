@@ -65,6 +65,8 @@ canonical_players:
         nickname: "MastaChief"
       - id: "gfzZBV6nbH"
         nickname: "MastaChief"
+      - id: "cbH8-Ek8pQ"
+        nickname: "C(3)PO"
 
   - id: 4
     name: "Levi Joraanstad"
@@ -275,6 +277,8 @@ canonical_players:
         nickname: "Daddy Dan"
       - id: "yPI1AsJhGX"
         nickname: "BLIND LEADETH"
+      - id: "H2yfYQ2Jcf"
+        nickname: "Daddy Dan"
 
   - id: 17
     name: "Trek Wilhelmi"
@@ -351,3 +355,15 @@ canonical_players:
     aliases:
       - id: "GjNBC1ApZ8"
         nickname: "Hansel"
+
+  - id: 27
+    name: "Jacob Schmiess"
+    aliases:
+      - id: "1yCoFl5uIM"
+        nickname: "Buttsoup"
+
+  - id: 28
+    name: "Jordan Kraft"
+    aliases:
+      - id: "npzGGDUXqm"
+        nickname: "Cactus Hands"
